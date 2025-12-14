@@ -1,0 +1,16 @@
+# TokenBrain Telegram Bot - Dependencies
+# Python 3.11+
+
+# Core
+aiogram>=3.3.0,<4.0.0          # Telegram Bot framework (async)
+pydantic>=2.5.0,<3.0.0         # Data validation & serialization
+pydantic-settings>=2.1.0,<3.0.0 # Settings management from env
+aiohttp>=3.9.0,<4.0.0          # Async HTTP client (used by aiogram)
+
+# Solana address validation
+base58>=2.1.0                   # Base58 encoding/decoding for Solana addresses
+
+# Dev dependencies
+pytest>=7.4.0                   # Testing framework
+pytest-asyncio>=0.21.0          # Async test support
+pytest-cov>=4.1.0               # Coverage reporting
