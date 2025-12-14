@@ -73,9 +73,14 @@ class TokenDataAggregator:
                 self._provider.get_token_data(address),
                 timeout=self._timeout,
             )
-            logger.debug(
-                f"Token data received: {token_data.symbol}, "
-                f"liquidity=${token_data.liquidity_usd:,.2f}"
+            liq_str = (
+                f"${token_data.liquidity_usd:,.2f}"
+                if token_data.liquidity_usd is not None
+                else "N/A"
+            )
+            logger.info(
+                f"Token data received: {token_data.symbol or 'UNKNOWN'}, "
+                f"liquidity={liq_str}"
             )
             return token_data
 

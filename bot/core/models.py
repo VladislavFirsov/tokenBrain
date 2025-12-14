@@ -9,6 +9,7 @@ Models provide:
 """
 
 from enum import Enum
+from typing import Any
 
 from pydantic import BaseModel, Field
 
@@ -107,8 +108,8 @@ class TokenData(BaseModel):
     holders: int = Field(ge=0)
     """Number of token holders"""
 
-    top10_holders_percent: float = Field(ge=0, le=100)
-    """Percentage of supply held by top 10 wallets"""
+    top10_holders_percent: float | None = Field(default=None, ge=0, le=100)
+    """Percentage of supply held by top 10 wallets (None if unknown)"""
 
     tx_count_24h: int = Field(ge=0)
     """Transaction count in last 24 hours"""
@@ -184,3 +185,44 @@ class AnalysisResult(BaseModel):
             }
         }
     }
+
+
+class RiskResult(BaseModel):
+    """
+    Result of risk calculation with completeness metrics.
+
+    This model is returned by RiskService.calculate_risk() and contains:
+    - Risk level decision
+    - Data completeness scores (safety + context)
+    - Raw risk signals for LLM
+    - Human-readable factors for explanation
+
+    Used for Anti-Hallucination Contract: LLM receives structured data
+    and must not add new factors beyond those provided.
+    """
+
+    level: RiskLevel
+    """Calculated risk level: HIGH, MEDIUM, or LOW"""
+
+    safety_completeness: float = Field(ge=0.0, le=1.0)
+    """Completeness of critical signals (mint, freeze, top1, top10). 1.0 = all known."""
+
+    context_completeness: float = Field(ge=0.0, le=1.0)
+    """Completeness of contextual signals (age, liquidity, metadata). 1.0 = all known."""
+
+    risk_signals: dict[str, Any]
+    """Raw risk signals for LLM (null = unknown)"""
+
+    factors: list[str]
+    """Human-readable risk factors. LLM must use ONLY these, not add new ones."""
+
+    @property
+    def total_completeness(self) -> float:
+        """
+        Combined completeness score.
+
+        Safety is weighted 70%, context 30%.
+        """
+        return (self.safety_completeness * 0.7) + (self.context_completeness * 0.3)
+
+    model_config = {"from_attributes": True}

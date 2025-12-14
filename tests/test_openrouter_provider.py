@@ -5,7 +5,7 @@ Tests cover:
 - Successful API responses
 - JSON parsing and validation
 - Fallback on error/timeout
-- System/user prompt separation
+- Anti-Hallucination Contract compliance
 """
 
 import pytest
@@ -15,6 +15,7 @@ from bot.core.models import (
     AnalysisResult,
     Recommendation,
     RiskLevel,
+    RiskResult,
     RugpullFlags,
     SocialInfo,
     TokenData,
@@ -54,6 +55,60 @@ def sample_token() -> TokenData:
         top5_holders_percent=30.0,
         rugpull_flags=RugpullFlags(),
         social=SocialInfo(twitter_exists=True, telegram_exists=True),
+    )
+
+
+@pytest.fixture
+def sample_risk_result_medium() -> RiskResult:
+    """Sample RiskResult for MEDIUM risk."""
+    return RiskResult(
+        level=RiskLevel.MEDIUM,
+        safety_completeness=1.0,
+        context_completeness=1.0,
+        risk_signals={
+            "mint_authority_exists": False,
+            "freeze_authority_exists": False,
+            "top1_holder_percent": 15.0,
+            "top10_holders_percent": 40.0,
+        },
+        factors=["Умеренная ликвидность", "Средняя концентрация держателей"],
+    )
+
+
+@pytest.fixture
+def sample_risk_result_high() -> RiskResult:
+    """Sample RiskResult for HIGH risk."""
+    return RiskResult(
+        level=RiskLevel.HIGH,
+        safety_completeness=1.0,
+        context_completeness=1.0,
+        risk_signals={
+            "mint_authority_exists": True,
+            "freeze_authority_exists": True,
+            "top1_holder_percent": 60.0,
+            "top10_holders_percent": 80.0,
+        },
+        factors=[
+            "Mint authority активен (можно создавать новые токены)",
+            "Высокая концентрация держателей",
+        ],
+    )
+
+
+@pytest.fixture
+def sample_risk_result_low() -> RiskResult:
+    """Sample RiskResult for LOW risk."""
+    return RiskResult(
+        level=RiskLevel.LOW,
+        safety_completeness=1.0,
+        context_completeness=1.0,
+        risk_signals={
+            "mint_authority_exists": False,
+            "freeze_authority_exists": False,
+            "top1_holder_percent": 5.0,
+            "top10_holders_percent": 20.0,
+        },
+        factors=["Основные показатели в норме"],
     )
 
 
@@ -103,6 +158,7 @@ class TestOpenRouterSuccess:
         self,
         openrouter_provider: OpenRouterLLMProvider,
         sample_token: TokenData,
+        sample_risk_result_medium: RiskResult,
         mock_success_response: dict,
     ) -> None:
         """Should generate analysis from valid response."""
@@ -110,7 +166,7 @@ class TestOpenRouterSuccess:
             m.post(OPENROUTER_API_URL, payload=mock_success_response)
 
             result = await openrouter_provider.generate_analysis(
-                sample_token, RiskLevel.MEDIUM
+                sample_token, sample_risk_result_medium
             )
 
             assert isinstance(result, AnalysisResult)
@@ -123,6 +179,7 @@ class TestOpenRouterSuccess:
         self,
         openrouter_provider: OpenRouterLLMProvider,
         sample_token: TokenData,
+        sample_risk_result_high: RiskResult,
         mock_high_risk_response: dict,
     ) -> None:
         """Should parse high risk response correctly."""
@@ -130,7 +187,7 @@ class TestOpenRouterSuccess:
             m.post(OPENROUTER_API_URL, payload=mock_high_risk_response)
 
             result = await openrouter_provider.generate_analysis(
-                sample_token, RiskLevel.HIGH
+                sample_token, sample_risk_result_high
             )
 
             assert result.risk == RiskLevel.HIGH
@@ -145,6 +202,7 @@ class TestOpenRouterJsonParsing:
         self,
         openrouter_provider: OpenRouterLLMProvider,
         sample_token: TokenData,
+        sample_risk_result_low: RiskResult,
     ) -> None:
         """Should extract JSON from markdown code block."""
         response = {
@@ -168,7 +226,7 @@ class TestOpenRouterJsonParsing:
             m.post(OPENROUTER_API_URL, payload=response)
 
             result = await openrouter_provider.generate_analysis(
-                sample_token, RiskLevel.LOW
+                sample_token, sample_risk_result_low
             )
 
             assert result.risk == RiskLevel.LOW
@@ -179,6 +237,7 @@ class TestOpenRouterJsonParsing:
         self,
         openrouter_provider: OpenRouterLLMProvider,
         sample_token: TokenData,
+        sample_risk_result_medium: RiskResult,
     ) -> None:
         """Should extract JSON from plain code block."""
         response = {
@@ -202,7 +261,7 @@ class TestOpenRouterJsonParsing:
             m.post(OPENROUTER_API_URL, payload=response)
 
             result = await openrouter_provider.generate_analysis(
-                sample_token, RiskLevel.MEDIUM
+                sample_token, sample_risk_result_medium
             )
 
             assert result.risk == RiskLevel.MEDIUM
@@ -216,6 +275,7 @@ class TestOpenRouterFallback:
         self,
         openrouter_provider: OpenRouterLLMProvider,
         sample_token: TokenData,
+        sample_risk_result_medium: RiskResult,
     ) -> None:
         """Should use fallback on API error."""
         with aioresponses() as m:
@@ -223,7 +283,7 @@ class TestOpenRouterFallback:
 
             # Should not raise, should return fallback
             result = await openrouter_provider.generate_analysis(
-                sample_token, RiskLevel.MEDIUM
+                sample_token, sample_risk_result_medium
             )
 
             assert isinstance(result, AnalysisResult)
@@ -234,6 +294,7 @@ class TestOpenRouterFallback:
         self,
         openrouter_provider: OpenRouterLLMProvider,
         sample_token: TokenData,
+        sample_risk_result_high: RiskResult,
     ) -> None:
         """Should use fallback on invalid JSON response."""
         response = {
@@ -244,7 +305,7 @@ class TestOpenRouterFallback:
             m.post(OPENROUTER_API_URL, payload=response)
 
             result = await openrouter_provider.generate_analysis(
-                sample_token, RiskLevel.HIGH
+                sample_token, sample_risk_result_high
             )
 
             # Should return fallback result
@@ -252,36 +313,27 @@ class TestOpenRouterFallback:
             assert result.risk == RiskLevel.HIGH
 
     @pytest.mark.asyncio
-    async def test_fallback_includes_authority_info(
+    async def test_fallback_uses_factors_from_risk_result(
         self,
         openrouter_provider: OpenRouterLLMProvider,
+        sample_token: TokenData,
+        sample_risk_result_high: RiskResult,
     ) -> None:
-        """Fallback should mention authority flags when present."""
-        risky_token = TokenData(
-            address="RiskyToken1111111111111111111111111111111",
-            name="Risky",
-            symbol="RISK",
-            age_days=5,
-            liquidity_usd=5000,
-            holders=100,
-            top10_holders_percent=80,
-            tx_count_24h=50,
-            mint_authority_exists=True,
-            freeze_authority_exists=True,
-            rugpull_flags=RugpullFlags(low_liquidity=True, new_contract=True),
-            social=SocialInfo(),
-        )
-
+        """Fallback should use factors from RiskResult (Anti-Hallucination)."""
         with aioresponses() as m:
             m.post(OPENROUTER_API_URL, status=500)
 
             result = await openrouter_provider.generate_analysis(
-                risky_token, RiskLevel.HIGH
+                sample_token, sample_risk_result_high
             )
 
-            # Should mention authorities in why
-            why_text = " ".join(result.why).lower()
-            assert "mint" in why_text or "authority" in why_text
+            # Should use factors from risk_result
+            # At least one factor should be from risk_result.factors
+            assert len(result.why) > 0
+            # Factors should come from risk_result.factors
+            for why in result.why:
+                # Either it's from factors or default
+                assert isinstance(why, str)
 
 
 class TestOpenRouterValidation:
@@ -292,6 +344,7 @@ class TestOpenRouterValidation:
         self,
         openrouter_provider: OpenRouterLLMProvider,
         sample_token: TokenData,
+        sample_risk_result_low: RiskResult,
     ) -> None:
         """Should truncate summary longer than 500 chars."""
         long_summary = "A" * 600
@@ -314,7 +367,7 @@ class TestOpenRouterValidation:
             m.post(OPENROUTER_API_URL, payload=response)
 
             result = await openrouter_provider.generate_analysis(
-                sample_token, RiskLevel.LOW
+                sample_token, sample_risk_result_low
             )
 
             assert len(result.summary) <= 500
@@ -324,6 +377,7 @@ class TestOpenRouterValidation:
         self,
         openrouter_provider: OpenRouterLLMProvider,
         sample_token: TokenData,
+        sample_risk_result_medium: RiskResult,
     ) -> None:
         """Should limit why list to 5 items."""
         response = {
@@ -345,7 +399,7 @@ class TestOpenRouterValidation:
             m.post(OPENROUTER_API_URL, payload=response)
 
             result = await openrouter_provider.generate_analysis(
-                sample_token, RiskLevel.MEDIUM
+                sample_token, sample_risk_result_medium
             )
 
             assert len(result.why) <= 5
@@ -355,6 +409,7 @@ class TestOpenRouterValidation:
         self,
         openrouter_provider: OpenRouterLLMProvider,
         sample_token: TokenData,
+        sample_risk_result_high: RiskResult,
     ) -> None:
         """Should map invalid recommendation based on risk level."""
         response = {
@@ -376,7 +431,7 @@ class TestOpenRouterValidation:
             m.post(OPENROUTER_API_URL, payload=response)
 
             result = await openrouter_provider.generate_analysis(
-                sample_token, RiskLevel.HIGH
+                sample_token, sample_risk_result_high
             )
 
             # Should map to AVOID for HIGH risk

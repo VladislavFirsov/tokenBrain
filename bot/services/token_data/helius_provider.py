@@ -26,8 +26,8 @@ logger = logging.getLogger(__name__)
 # Helius API endpoint
 HELIUS_RPC_URL = "https://mainnet.helius-rpc.com"
 
-# Default timeout (SLA: 1.2 sec)
-DEFAULT_TIMEOUT = 1.2
+# Default timeout (increased for popular tokens with many holders)
+DEFAULT_TIMEOUT = 5.0
 
 
 class HeliusTokenDataProvider:

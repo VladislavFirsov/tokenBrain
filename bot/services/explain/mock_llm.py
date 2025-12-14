@@ -2,8 +2,7 @@
 Mock LLM provider for development.
 
 Generates realistic analysis responses without calling real LLM API.
-The output format is EXACTLY the same as what Claude would return,
-ensuring UI/UX testing accuracy.
+Uses Anti-Hallucination Contract: only uses factors from RiskResult.
 
 Output format (must match exactly):
 {
@@ -18,6 +17,7 @@ from bot.core.models import (
     AnalysisResult,
     Recommendation,
     RiskLevel,
+    RiskResult,
     TokenData,
 )
 
@@ -26,138 +26,89 @@ class MockLLMProvider:
     """
     Mock LLM provider that returns template-based responses.
 
-    Designed to produce output identical in structure to real Claude API.
-    Responses are based on the pre-calculated risk level and token data.
+    Anti-Hallucination Contract:
+    - Uses ONLY factors[] from RiskResult for "why" field
+    - Does not add new reasons
+    - Risk level comes from RiskResult.level
 
     Usage:
         provider = MockLLMProvider()
-        result = await provider.generate_analysis(token_data, RiskLevel.HIGH)
+        result = await provider.generate_analysis(token_data, risk_result)
     """
-
-    # Response templates by risk level
-    # These are designed to be realistic and match expected LLM output
-    TEMPLATES = {
-        RiskLevel.HIGH: {
-            "summary_templates": [
-                "Токен выглядит очень рискованным: низкая ликвидность, "
-                "маленький возраст, высокая концентрация держателей.",
-                "Этот токен несёт высокие риски. Основные проблемы: "
-                "недостаточная ликвидность и централизованное владение.",
-                "Крайне рискованный токен. Множество красных флагов "
-                "указывают на возможный скам.",
-            ],
-            "why_templates": [
-                [
-                    "Ликвидность ниже безопасного порога",
-                    "Контракт создан недавно",
-                    "Топ-10 держателей контролируют большую часть предложения",
-                ],
-                [
-                    "Недостаточная ликвидность для безопасного выхода",
-                    "Слишком новый проект без истории",
-                    "Высокий риск dump от крупных держателей",
-                ],
-                [
-                    "Низкий объём торгов",
-                    "Нет подтверждённой команды",
-                    "Централизованное распределение токенов",
-                ],
-            ],
-            "recommendation": Recommendation.AVOID,
-        },
-        RiskLevel.MEDIUM: {
-            "summary_templates": [
-                "Есть ряд вопросов: умеренная ликвидность, "
-                "средняя концентрация держателей. Требуется осторожность.",
-                "Токен имеет смешанные показатели. Некоторые метрики "
-                "вызывают вопросы, но критических рисков не обнаружено.",
-                "Средний уровень риска. Токен не идеален, но и не "
-                "выглядит откровенным скамом.",
-            ],
-            "why_templates": [
-                [
-                    "Ликвидность в среднем диапазоне",
-                    "Токен относительно новый",
-                    "Распределение держателей требует внимания",
-                ],
-                [
-                    "Умеренный объём торгов",
-                    "Проект ещё развивается",
-                    "Есть пространство для улучшения метрик",
-                ],
-                [
-                    "Средняя ликвидность",
-                    "История проекта пока короткая",
-                    "Социальные показатели средние",
-                ],
-            ],
-            "recommendation": Recommendation.CAUTION,
-        },
-        RiskLevel.LOW: {
-            "summary_templates": [
-                "Структура токена выглядит стабильной. "
-                "Хорошая ликвидность и распределение.",
-                "Токен демонстрирует здоровые показатели. "
-                "Достаточная ликвидность и децентрализованное владение.",
-                "Относительно безопасный токен с хорошими метриками. "
-                "Основные риски минимизированы.",
-            ],
-            "why_templates": [
-                [
-                    "Высокая ликвидность",
-                    "Токен существует достаточно долго",
-                    "Равномерное распределение между держателями",
-                ],
-                [
-                    "Достаточный объём для безопасной торговли",
-                    "Проверенная история проекта",
-                    "Децентрализованное владение",
-                ],
-                [
-                    "Стабильная ликвидность",
-                    "Зрелый проект",
-                    "Активное сообщество",
-                ],
-            ],
-            "recommendation": Recommendation.OK,
-        },
-    }
 
     async def generate_analysis(
         self,
         token_data: TokenData,
-        risk_level: RiskLevel,
+        risk_result: RiskResult,
     ) -> AnalysisResult:
         """
-        Generate mock analysis based on risk level.
+        Generate mock analysis based on RiskResult.
 
-        Uses template responses to simulate LLM output.
-        Selects template variation based on token address hash
-        for deterministic but varied responses.
+        Anti-Hallucination: uses ONLY factors from risk_result.
 
         Args:
-            token_data: Token information (used for variation selection)
-            risk_level: Pre-calculated risk level
+            token_data: Token information
+            risk_result: Pre-calculated risk with factors and completeness
 
         Returns:
             AnalysisResult matching exact Claude API format
         """
-        template = self.TEMPLATES[risk_level]
+        risk_level = risk_result.level
 
-        # Use token address to select variation (deterministic)
-        variation_index = sum(ord(c) for c in token_data.address) % 3
+        # Anti-Hallucination: use ONLY factors from risk_result
+        why = risk_result.factors[:5] if risk_result.factors else []
 
-        summary = template["summary_templates"][variation_index]
-        why = template["why_templates"][variation_index]
-        recommendation = template["recommendation"]
+        # Ensure at least one reason
+        if not why:
+            why = self._default_reasons(risk_level)
 
-        # Customize summary with token name if available
-        if token_data.name:
-            summary = f"{token_data.name}: {summary}"
+        # Build summary based on risk level and completeness
+        summary = self._build_summary(token_data, risk_result)
+
+        # Recommendation based on risk level
+        recommendations = {
+            RiskLevel.HIGH: Recommendation.AVOID,
+            RiskLevel.MEDIUM: Recommendation.CAUTION,
+            RiskLevel.LOW: Recommendation.OK,
+        }
 
         return AnalysisResult(
             risk=risk_level,
             summary=summary,
             why=why,
-            recommendation=recommendation,
+            recommendation=recommendations[risk_level],
         )
+
+    def _default_reasons(self, risk_level: RiskLevel) -> list[str]:
+        """Default reasons when factors are empty."""
+        defaults = {
+            RiskLevel.HIGH: ["Обнаружены критические проблемы"],
+            RiskLevel.MEDIUM: ["Недостаточно данных для полного анализа"],
+            RiskLevel.LOW: ["Основные показатели в норме"],
+        }
+        return defaults[risk_level]
+
+    def _build_summary(self, token_data: TokenData, risk_result: RiskResult) -> str:
+        """Build summary based on risk level and completeness."""
+        symbol = token_data.name or token_data.symbol or "Токен"
+        risk_level = risk_result.level
+
+        # Note about data completeness
+        completeness_note = ""
+        if risk_result.safety_completeness < 1.0:
+            completeness_note = " Часть данных недоступна."
+
+        summaries = {
+            RiskLevel.HIGH: (
+                f"{symbol}: высокий риск. Обнаружены критические проблемы.{completeness_note}"
+            ),
+            RiskLevel.MEDIUM: (
+                f"{symbol}: средний риск. "
+                f"Требуется осторожность.{completeness_note}"
+            ),
+            RiskLevel.LOW: (
+                f"{symbol}: низкий риск. Основные показатели в норме.{completeness_note}"
+            ),
+        }
+
+        return summaries[risk_level]

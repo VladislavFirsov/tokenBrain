@@ -67,8 +67,8 @@ class AnalyzerOrchestrator:
 
         Orchestrates the complete analysis workflow:
         1. Fetch token data from providers
-        2. Calculate risk level using heuristics
-        3. Generate human-readable explanation
+        2. Calculate risk level using heuristics (returns RiskResult)
+        3. Generate human-readable explanation (with Anti-Hallucination Contract)
         4. Return structured result
 
         Args:
@@ -85,19 +85,27 @@ class AnalyzerOrchestrator:
 
         # Step 1: Fetch token data
         token_data = await self._aggregator.get_token_data(token_address)
-        logger.debug(
-            f"Token data: {token_data.symbol}, ${token_data.liquidity_usd:,.0f}"
+        liq_str = (
+            f"${token_data.liquidity_usd:,.0f}"
+            if token_data.liquidity_usd is not None
+            else "N/A"
+        )
+        logger.debug(f"Token data: {token_data.symbol or 'UNKNOWN'}, {liq_str}")
+
+        # Step 2: Calculate risk level (returns RiskResult with completeness scores)
+        risk_result = self._risk_service.calculate_risk(token_data)
+        logger.info(
+            f"Risk calculated: {risk_result.level.value}, "
+            f"safety={risk_result.safety_completeness:.0%}, "
+            f"context={risk_result.context_completeness:.0%}, "
+            f"factors={len(risk_result.factors)}"
         )
 
-        # Step 2: Calculate risk level
-        risk_level = self._risk_service.calculate_risk(token_data)
-        logger.debug(f"Risk level: {risk_level.value}")
-
-        # Step 3: Generate explanation
-        result = await self._explain_service.explain(token_data, risk_level)
+        # Step 3: Generate explanation (LLM uses only factors from risk_result)
+        result = await self._explain_service.explain(token_data, risk_result)
         logger.info(
             f"Analysis complete for {token_data.symbol}: "
-            f"{risk_level.value} risk, {result.recommendation.value}"
+            f"{risk_result.level.value} risk, {result.recommendation.value}"
         )
 
         return result

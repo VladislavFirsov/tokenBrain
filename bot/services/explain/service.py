@@ -15,7 +15,7 @@ import asyncio
 import logging
 
 from bot.core.exceptions import LLMError
-from bot.core.models import AnalysisResult, RiskLevel, TokenData
+from bot.core.models import AnalysisResult, RiskResult, TokenData
 from bot.core.protocols import LLMProvider
 
 logger = logging.getLogger(__name__)
@@ -54,7 +54,7 @@ class ExplainService:
     async def explain(
         self,
         token_data: TokenData,
-        risk_level: RiskLevel,
+        risk_result: RiskResult,
     ) -> AnalysisResult:
         """
         Generate explanation for token analysis.
@@ -62,9 +62,14 @@ class ExplainService:
         Calls the LLM to produce a human-readable summary
         of why the token has its risk level.
 
+        Anti-Hallucination Contract:
+        - LLM receives risk_result.factors[] and must use ONLY these
+        - LLM must not add new factors
+        - Risk level is fixed by risk_result.level
+
         Args:
             token_data: Normalized token information
-            risk_level: Pre-calculated risk level
+            risk_result: Pre-calculated risk with factors and completeness scores
 
         Returns:
             AnalysisResult with summary, reasons, and recommendation
@@ -74,7 +79,9 @@ class ExplainService:
         """
         logger.info(
             f"Generating explanation for {token_data.symbol}, "
-            f"risk={risk_level.value}"
+            f"risk={risk_result.level.value}, "
+            f"safety={risk_result.safety_completeness:.0%}, "
+            f"context={risk_result.context_completeness:.0%}"
         )
 
         try:
@@ -82,7 +89,7 @@ class ExplainService:
             result = await asyncio.wait_for(
                 self._llm_provider.generate_analysis(
                     token_data,
-                    risk_level,
+                    risk_result,
                 ),
                 timeout=self._timeout,
             )

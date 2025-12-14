@@ -38,6 +38,9 @@ def high_risk_token() -> TokenData:
         holders=50,
         top10_holders_percent=85,
         tx_count_24h=20,
+        mint_authority_exists=True,
+        freeze_authority_exists=True,
+        top1_holder_percent=60.0,
         rugpull_flags=RugpullFlags(
             new_contract=True,
             low_liquidity=True,
@@ -49,7 +52,7 @@ def high_risk_token() -> TokenData:
 
 @pytest.fixture
 def medium_risk_token() -> TokenData:
-    """Token with MEDIUM risk indicators."""
+    """Token with MEDIUM risk indicators (some critical signals unknown)."""
     return TokenData(
         address="MediumRiskToken111111111111111111111111111",
         name="MidCoin",
@@ -59,6 +62,9 @@ def medium_risk_token() -> TokenData:
         holders=500,
         top10_holders_percent=45,
         tx_count_24h=200,
+        mint_authority_exists=False,
+        freeze_authority_exists=False,
+        top1_holder_percent=None,  # Unknown — blocks LOW
         rugpull_flags=RugpullFlags(),
         social=SocialInfo(
             twitter_exists=True,
@@ -69,7 +75,7 @@ def medium_risk_token() -> TokenData:
 
 @pytest.fixture
 def low_risk_token() -> TokenData:
-    """Token with LOW risk indicators."""
+    """Token with LOW risk indicators (all critical signals known and safe)."""
     return TokenData(
         address="LowRiskToken1111111111111111111111111111111",
         name="SafeCoin",
@@ -79,6 +85,10 @@ def low_risk_token() -> TokenData:
         holders=10_000,
         top10_holders_percent=25,
         tx_count_24h=5_000,
+        mint_authority_exists=False,
+        freeze_authority_exists=False,
+        top1_holder_percent=10.0,
+        top5_holders_percent=20.0,
         rugpull_flags=RugpullFlags(),
         social=SocialInfo(
             twitter_exists=True,

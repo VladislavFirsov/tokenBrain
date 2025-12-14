@@ -24,6 +24,7 @@ from bot.core.models import (
     AnalysisResult,
     Recommendation,
     RiskLevel,
+    RiskResult,
     TokenData,
 )
 
@@ -35,28 +36,31 @@ OPENROUTER_API_URL = "https://openrouter.ai/api/v1/chat/completions"
 # Default timeout (SLA: 1.5 sec)
 DEFAULT_TIMEOUT = 1.5
 
-# System prompt - rules, format, restrictions
-SYSTEM_PROMPT = """Ты — эксперт по анализу криптовалютных токенов.
+# System prompt - Anti-Hallucination Contract
+SYSTEM_PROMPT = """Ты — аналитик рисков криптовалютных токенов.
 
-ПРАВИЛА:
-1. Отвечай СТРОГО в JSON формате
-2. НЕ придумывай данные
-3. Используй только предоставленную информацию
-4. Пиши на русском языке
-5. Будь кратким и понятным
+ANTI-HALLUCINATION CONTRACT:
+1. Используй ТОЛЬКО переданные данные и factors[]
+2. НЕ добавляй НОВЫЕ причины — используй ТОЛЬКО factors[]
+3. Если значение = null — считай неизвестным и укажи это
+4. НЕ делай предположений о данных, которых нет
+5. Risk level УЖЕ рассчитан системой — НЕ меняй его
+6. Ответ СТРОГО в JSON формате
 
-ФОРМАТ ОТВЕТА (строго JSON):
+ФОРМАТ ОТВЕТА:
 {
   "risk": "high" | "medium" | "low",
-  "summary": "краткое объяснение (1-2 предложения)",
-  "why": ["причина 1", "причина 2", "причина 3"],
+  "summary": "краткое объяснение на основе factors (1-2 предложения)",
+  "why": ["причина из factors 1", "причина из factors 2", ...],
   "recommendation": "avoid" | "caution" | "ok"
 }
 
-ВАЖНО:
-- risk должен совпадать с предоставленным уровнем риска
-- why должен содержать 1-5 причин
-- summary максимум 200 символов"""
+ПРАВИЛА:
+- risk ДОЛЖЕН совпадать с предоставленным уровнем
+- why берётся ТОЛЬКО из переданного factors[] (переформулируй если нужно)
+- Если данных недостаточно — объясни это в summary
+- summary максимум 200 символов
+- Пиши на русском языке, будь кратким"""
 
 
 class OpenRouterLLMProvider:
@@ -90,14 +94,18 @@ class OpenRouterLLMProvider:
     async def generate_analysis(
         self,
         token_data: TokenData,
-        risk_level: RiskLevel,
+        risk_result: RiskResult,
     ) -> AnalysisResult:
         """
         Generate analysis using OpenRouter LLM.
 
+        Anti-Hallucination Contract:
+        - LLM receives risk_result.factors[] and must use ONLY these
+        - LLM must not change the risk level
+
         Args:
             token_data: Normalized token information
-            risk_level: Pre-calculated risk level
+            risk_result: Pre-calculated risk with factors and completeness scores
 
         Returns:
             AnalysisResult with summary, reasons, and recommendation
@@ -107,39 +115,40 @@ class OpenRouterLLMProvider:
         """
         logger.info(
             f"Generating LLM analysis for {token_data.symbol}, "
-            f"risk={risk_level.value}"
+            f"risk={risk_result.level.value}, "
+            f"factors={len(risk_result.factors)}"
         )
 
         try:
             response = await asyncio.wait_for(
-                self._call_api(token_data, risk_level),
+                self._call_api(token_data, risk_result),
                 timeout=self._timeout,
             )
             return response
 
         except TimeoutError:
             logger.warning(f"OpenRouter timeout after {self._timeout}s, using fallback")
-            return self._generate_fallback(token_data, risk_level)
+            return self._generate_fallback(token_data, risk_result)
 
         except LLMError as e:
             # Use fallback for LLM errors too (API errors, parse errors)
             logger.warning(f"LLM error: {e}, using fallback")
-            return self._generate_fallback(token_data, risk_level)
+            return self._generate_fallback(token_data, risk_result)
 
         except Exception as e:
             logger.warning(f"OpenRouter error: {e}, using fallback")
-            return self._generate_fallback(token_data, risk_level)
+            return self._generate_fallback(token_data, risk_result)
 
     async def _call_api(
         self,
         token_data: TokenData,
-        risk_level: RiskLevel,
+        risk_result: RiskResult,
     ) -> AnalysisResult:
         """
         Make actual API call to OpenRouter.
         """
-        # Build user prompt with token data
-        user_prompt = self._build_user_prompt(token_data, risk_level)
+        # Build user prompt with token data and factors (Anti-Hallucination)
+        user_prompt = self._build_user_prompt(token_data, risk_result)
 
         payload = {
             "model": self._model,
@@ -147,7 +156,7 @@ class OpenRouterLLMProvider:
                 {"role": "system", "content": SYSTEM_PROMPT},
                 {"role": "user", "content": user_prompt},
             ],
-            "temperature": 0.3,  # Lower temperature for consistent output
+            "temperature": 0.2,  # Lower temperature for consistent output
             "max_tokens": 500,
         }
 
@@ -186,57 +195,46 @@ class OpenRouterLLMProvider:
             ) from e
 
         # Parse and validate JSON response
-        return self._parse_response(content, risk_level)
+        return self._parse_response(content, risk_result.level)
 
     def _build_user_prompt(
         self,
         token_data: TokenData,
-        risk_level: RiskLevel,
+        risk_result: RiskResult,
     ) -> str:
         """
-        Build user prompt with token data.
+        Build user prompt with token data and factors (Anti-Hallucination Contract).
+
+        LLM receives:
+        - risk_signals: raw data (with null for unknown)
+        - factors: pre-calculated reasons (LLM must use ONLY these)
+        - completeness scores: data quality indicators
         """
-        # Prepare token data summary
-        data_summary = {
-            "name": token_data.name or "Unknown",
-            "symbol": token_data.symbol or "UNKNOWN",
-            "age_days": token_data.age_days,
-            "liquidity_usd": token_data.liquidity_usd,
-            "holders": token_data.holders,
-            "top10_holders_percent": token_data.top10_holders_percent,
+        # Build structured data for LLM (Anti-Hallucination)
+        prompt_data = {
+            "token": {
+                "name": token_data.name or "Unknown",
+                "symbol": token_data.symbol or "UNKNOWN",
+            },
+            "risk_level": risk_result.level.value,
+            "safety_completeness": f"{risk_result.safety_completeness:.0%}",
+            "context_completeness": f"{risk_result.context_completeness:.0%}",
+            "risk_signals": risk_result.risk_signals,
+            "factors": risk_result.factors,
         }
 
-        # Add authority flags if available
-        if token_data.mint_authority_exists is not None:
-            data_summary["mint_authority_exists"] = token_data.mint_authority_exists
+        return f"""Проанализируй токен.
 
-        if token_data.freeze_authority_exists is not None:
-            data_summary["freeze_authority_exists"] = token_data.freeze_authority_exists
+ДАННЫЕ (Anti-Hallucination Contract):
+{json.dumps(prompt_data, ensure_ascii=False, indent=2)}
 
-        if token_data.metadata_mutable is not None:
-            data_summary["metadata_mutable"] = token_data.metadata_mutable
+ВАЖНО:
+- Уровень риска УЖЕ рассчитан: {risk_result.level.value}
+- Используй ТОЛЬКО factors[] для поля "why"
+- НЕ добавляй новые причины
+- null в risk_signals = данные неизвестны
 
-        # Add holder concentration if available
-        if token_data.top1_holder_percent is not None:
-            data_summary["top1_holder_percent"] = token_data.top1_holder_percent
-
-        if token_data.top5_holders_percent is not None:
-            data_summary["top5_holders_percent"] = token_data.top5_holders_percent
-
-        # Add rugpull flags
-        data_summary["rugpull_flags"] = {
-            "new_contract": token_data.rugpull_flags.new_contract,
-            "low_liquidity": token_data.rugpull_flags.low_liquidity,
-            "centralized_holders": token_data.rugpull_flags.centralized_holders,
-        }
-
-        return f"""Проанализируй токен:
-
-Данные: {json.dumps(data_summary, ensure_ascii=False, indent=2)}
-
-Уровень риска (рассчитан системой): {risk_level.value}
-
-Объясни почему токен имеет такой уровень риска. Ответь в JSON формате."""
+Ответь в JSON формате."""
 
     def _parse_response(
         self,
@@ -315,57 +313,40 @@ class OpenRouterLLMProvider:
     def _generate_fallback(
         self,
         token_data: TokenData,
-        risk_level: RiskLevel,
+        risk_result: RiskResult,
     ) -> AnalysisResult:
         """
         Generate fallback response when LLM fails.
 
-        Uses template-based response similar to mock provider.
+        Uses factors from risk_result (Anti-Hallucination Contract).
         """
         logger.info("Using fallback template for analysis")
 
-        # Build reasons from available data
-        why = []
+        risk_level = risk_result.level
 
-        if risk_level == RiskLevel.HIGH:
-            if token_data.mint_authority_exists:
-                why.append("Присутствует mint authority (можно создавать новые токены)")
-            if token_data.freeze_authority_exists:
-                why.append("Присутствует freeze authority (можно заморозить переводы)")
-            if token_data.top1_holder_percent and token_data.top1_holder_percent > 50:
-                why.append(
-                    f"Один кошелёк контролирует {token_data.top1_holder_percent:.1f}% токенов"
-                )
-            if token_data.rugpull_flags.low_liquidity:
-                why.append("Низкая ликвидность")
-            if token_data.rugpull_flags.new_contract:
-                why.append("Очень молодой контракт")
-            if token_data.rugpull_flags.centralized_holders:
-                why.append("Высокая концентрация у топ-держателей")
-
-        elif risk_level == RiskLevel.MEDIUM:
-            why.append("Некоторые показатели требуют внимания")
-            if token_data.metadata_mutable:
-                why.append("Метаданные токена могут быть изменены")
-            if token_data.top5_holders_percent and token_data.top5_holders_percent > 40:
-                why.append("Умеренная концентрация у крупных держателей")
-
-        else:  # LOW
-            why.append("Основные показатели в норме")
-            if not token_data.mint_authority_exists:
-                why.append("Mint authority отозван")
-            if not token_data.freeze_authority_exists:
-                why.append("Freeze authority отозван")
+        # Use pre-calculated factors (Anti-Hallucination)
+        why = risk_result.factors[:5] if risk_result.factors else []
 
         # Ensure at least one reason
         if not why:
-            why = ["Анализ на основе доступных данных"]
+            if risk_level == RiskLevel.HIGH:
+                why = ["Обнаружены критические проблемы"]
+            elif risk_level == RiskLevel.MEDIUM:
+                why = ["Недостаточно данных для полного анализа"]
+            else:
+                why = ["Основные показатели в норме"]
 
-        # Build summary
+        # Build summary based on completeness
+        symbol = token_data.symbol or "Токен"
+        if risk_result.safety_completeness < 1.0:
+            completeness_note = " Часть данных недоступна."
+        else:
+            completeness_note = ""
+
         summaries = {
-            RiskLevel.HIGH: f"{token_data.symbol or 'Токен'}: высокий риск. Обнаружены критические проблемы.",
-            RiskLevel.MEDIUM: f"{token_data.symbol or 'Токен'}: средний риск. Есть вопросы, требующие внимания.",
-            RiskLevel.LOW: f"{token_data.symbol or 'Токен'}: низкий риск. Основные показатели в норме.",
+            RiskLevel.HIGH: f"{symbol}: высокий риск.{completeness_note}",
+            RiskLevel.MEDIUM: f"{symbol}: средний риск.{completeness_note}",
+            RiskLevel.LOW: f"{symbol}: низкий риск.{completeness_note}",
         }
 
         recommendations = {
@@ -377,6 +358,6 @@ class OpenRouterLLMProvider:
         return AnalysisResult(
             risk=risk_level,
             summary=summaries[risk_level],
-            why=why[:5],
+            why=why,
             recommendation=recommendations[risk_level],
         )

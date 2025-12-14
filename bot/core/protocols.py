@@ -12,7 +12,7 @@ Each protocol defines the contract that implementations must follow.
 
 from typing import Protocol, runtime_checkable
 
-from bot.core.models import AnalysisResult, RiskLevel, TokenData
+from bot.core.models import AnalysisResult, RiskResult, TokenData
 
 
 @runtime_checkable
@@ -56,24 +56,30 @@ class LLMProvider(Protocol):
 
     The provider must return AnalysisResult in the exact format
     expected by the frontend.
+
+    Anti-Hallucination Contract:
+    - LLM receives RiskResult with pre-calculated factors[]
+    - LLM must use ONLY these factors, not add new ones
+    - LLM must not change the risk level
     """
 
     async def generate_analysis(
         self,
         token_data: TokenData,
-        risk_level: RiskLevel,
+        risk_result: RiskResult,
     ) -> AnalysisResult:
         """
         Generate analysis explanation from token data.
 
         The LLM should:
-        1. NOT calculate risk (already provided)
-        2. Explain the data in simple terms
-        3. Return strictly formatted JSON
+        1. NOT calculate risk (already provided in risk_result)
+        2. Use ONLY factors[] from risk_result
+        3. Explain in simple terms
+        4. Return strictly formatted JSON
 
         Args:
             token_data: Normalized token information
-            risk_level: Pre-calculated risk level
+            risk_result: Pre-calculated risk with factors and completeness
 
         Returns:
             AnalysisResult with summary, reasons, and recommendation
