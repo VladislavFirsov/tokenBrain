@@ -16,8 +16,8 @@ from aiogram.client.default import DefaultBotProperties
 from aiogram.enums import ParseMode
 
 from bot.config import get_settings
-from bot.services.factory import ServiceFactory
 from bot.handlers import setup_routers
+from bot.services.factory import ServiceFactory
 
 
 def setup_logging(level: str) -> None:

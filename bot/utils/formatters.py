@@ -5,8 +5,7 @@ Converts AnalysisResult into user-friendly Telegram messages.
 Uses HTML formatting for better readability.
 """
 
-from bot.core.models import AnalysisResult, RiskLevel, Recommendation
-
+from bot.core.models import AnalysisResult, Recommendation, RiskLevel
 
 # Emoji mappings for risk levels
 RISK_EMOJI = {

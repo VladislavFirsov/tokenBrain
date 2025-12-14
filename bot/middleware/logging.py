@@ -7,10 +7,11 @@ Captures user info, message content, and processing time.
 
 import logging
 import time
-from typing import Any, Awaitable, Callable, Dict
+from collections.abc import Awaitable, Callable
+from typing import Any
 
 from aiogram import BaseMiddleware
-from aiogram.types import Update, Message
+from aiogram.types import Update
 
 logger = logging.getLogger(__name__)
 
@@ -32,9 +33,9 @@ class LoggingMiddleware(BaseMiddleware):
 
     async def __call__(
         self,
-        handler: Callable[[Update, Dict[str, Any]], Awaitable[Any]],
+        handler: Callable[[Update, dict[str, Any]], Awaitable[Any]],
         event: Update,
-        data: Dict[str, Any],
+        data: dict[str, Any],
     ) -> Any:
         """
         Process update and log information.
@@ -66,9 +67,7 @@ class LoggingMiddleware(BaseMiddleware):
 
         except Exception as e:
             elapsed = (time.monotonic() - start_time) * 1000
-            logger.error(
-                f"Error after {elapsed:.2f}ms: {type(e).__name__}: {e}"
-            )
+            logger.error(f"Error after {elapsed:.2f}ms: {type(e).__name__}: {e}")
             raise
 
     def _get_user_info(self, event: Update) -> str:

@@ -12,7 +12,7 @@ Each protocol defines the contract that implementations must follow.
 
 from typing import Protocol, runtime_checkable
 
-from bot.core.models import TokenData, RiskLevel, AnalysisResult
+from bot.core.models import AnalysisResult, RiskLevel, TokenData
 
 
 @runtime_checkable

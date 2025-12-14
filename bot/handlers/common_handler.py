@@ -10,7 +10,7 @@ from aiogram import Router
 from aiogram.filters import Command
 from aiogram.types import Message
 
-from bot.templates.messages import WELCOME, HELP
+from bot.templates.messages import HELP, WELCOME
 
 router = Router(name="common")
 

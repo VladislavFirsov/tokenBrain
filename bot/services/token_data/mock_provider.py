@@ -7,9 +7,8 @@ Uses deterministic random generation based on address for consistent results.
 
 import hashlib
 import random
-from typing import Optional
 
-from bot.core.models import TokenData, RugpullFlags, SocialInfo
+from bot.core.models import RugpullFlags, SocialInfo, TokenData
 
 
 class MockTokenDataProvider:

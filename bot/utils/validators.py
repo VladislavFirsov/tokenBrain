@@ -49,7 +49,10 @@ def validate_solana_address(address: str) -> tuple[bool, str | None]:
 
     # Quick length check (Solana addresses are 32-44 chars)
     if len(address) < 32 or len(address) > 44:
-        return False, f"Неверная длина адреса: {len(address)} символов (ожидается 32-44)"
+        return (
+            False,
+            f"Неверная длина адреса: {len(address)} символов (ожидается 32-44)",
+        )
 
     # Try to decode base58
     try:

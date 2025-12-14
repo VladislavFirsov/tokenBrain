@@ -10,7 +10,7 @@ Integration tests that verify the full analysis flow:
 
 import pytest
 
-from bot.core.models import RiskLevel, Recommendation, AnalysisResult
+from bot.core.models import AnalysisResult, Recommendation, RiskLevel
 from bot.services.orchestrator import AnalyzerOrchestrator
 
 

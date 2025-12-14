@@ -34,9 +34,10 @@ def setup_routers(
         orchestrator: Analyzer service for injection into handlers
     """
     # Register middleware (order: first registered = outermost)
-    # Error handler should be outermost to catch all errors
-    dp.update.middleware(ErrorHandlerMiddleware())
+    # Logging should be outermost to capture all requests including errors
+    # Error handler is inner to catch and transform exceptions
     dp.update.middleware(LoggingMiddleware())
+    dp.update.middleware(ErrorHandlerMiddleware())
 
     # Store orchestrator for dependency injection
     # This makes it available as a handler argument

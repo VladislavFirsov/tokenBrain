@@ -8,20 +8,20 @@ This module contains the fundamental building blocks of the application:
 """
 
 from bot.core.exceptions import (
-    TokenBrainError,
-    ValidationError,
     DataFetchError,
     LLMError,
+    TokenBrainError,
+    ValidationError,
 )
 from bot.core.models import (
-    RiskLevel,
+    AnalysisResult,
     Recommendation,
+    RiskLevel,
     RugpullFlags,
     SocialInfo,
     TokenData,
-    AnalysisResult,
 )
-from bot.core.protocols import TokenDataProvider, LLMProvider
+from bot.core.protocols import LLMProvider, TokenDataProvider
 
 __all__ = [
     # Exceptions

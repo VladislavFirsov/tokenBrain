@@ -15,10 +15,10 @@ Output format (must match exactly):
 """
 
 from bot.core.models import (
-    TokenData,
-    RiskLevel,
     AnalysisResult,
     Recommendation,
+    RiskLevel,
+    TokenData,
 )
 
 

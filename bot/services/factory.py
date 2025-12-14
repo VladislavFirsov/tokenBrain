@@ -11,12 +11,13 @@ should be created through this factory.
 import logging
 
 from bot.config.settings import Settings
+from bot.core.protocols import LLMProvider, TokenDataProvider
+from bot.services.explain.mock_llm import MockLLMProvider
+from bot.services.explain.service import ExplainService
+from bot.services.orchestrator import AnalyzerOrchestrator
+from bot.services.risk.service import RiskService
 from bot.services.token_data.aggregator import TokenDataAggregator
 from bot.services.token_data.mock_provider import MockTokenDataProvider
-from bot.services.risk.service import RiskService
-from bot.services.explain.service import ExplainService
-from bot.services.explain.mock_llm import MockLLMProvider
-from bot.services.orchestrator import AnalyzerOrchestrator
 
 logger = logging.getLogger(__name__)
 
@@ -51,13 +52,12 @@ class ServiceFactory:
         mode = "MOCK" if self._settings.use_mock_services else "PRODUCTION"
         logger.info(f"ServiceFactory initialized in {mode} mode")
 
-    def create_token_data_provider(self) -> MockTokenDataProvider:
+    def create_token_data_provider(self) -> TokenDataProvider:
         """
         Create token data provider.
 
         Returns:
-            MockTokenDataProvider in mock mode
-            (RealTokenDataProvider in production - not implemented yet)
+            TokenDataProvider implementation based on settings
         """
         if self._settings.use_mock_services:
             logger.debug("Creating MockTokenDataProvider")
@@ -74,13 +74,12 @@ class ServiceFactory:
             "Set USE_MOCK_SERVICES=true or implement RealTokenDataProvider."
         )
 
-    def create_llm_provider(self) -> MockLLMProvider:
+    def create_llm_provider(self) -> LLMProvider:
         """
         Create LLM provider.
 
         Returns:
-            MockLLMProvider in mock mode
-            (ClaudeLLMProvider in production - not implemented yet)
+            LLMProvider implementation based on settings
         """
         if self._settings.use_mock_services:
             logger.debug("Creating MockLLMProvider")

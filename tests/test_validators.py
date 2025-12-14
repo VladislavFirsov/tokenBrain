@@ -10,7 +10,7 @@ Tests cover:
 
 import pytest
 
-from bot.utils.validators import validate_solana_address, is_valid_solana_address
+from bot.utils.validators import is_valid_solana_address, validate_solana_address
 
 
 class TestValidateSolanaAddress:

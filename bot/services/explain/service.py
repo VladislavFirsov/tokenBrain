@@ -8,15 +8,20 @@ Responsibilities:
 1. Take token data and risk level
 2. Call LLM provider to generate explanation
 3. Return structured AnalysisResult
+4. Enforce timeout on LLM calls
 """
 
+import asyncio
 import logging
 
-from bot.core.models import TokenData, RiskLevel, AnalysisResult
-from bot.core.protocols import LLMProvider
 from bot.core.exceptions import LLMError
+from bot.core.models import AnalysisResult, RiskLevel, TokenData
+from bot.core.protocols import LLMProvider
 
 logger = logging.getLogger(__name__)
+
+# Default timeout for LLM calls (seconds)
+DEFAULT_LLM_TIMEOUT = 30.0
 
 
 class ExplainService:
@@ -24,7 +29,7 @@ class ExplainService:
     Service for generating analysis explanations.
 
     Uses an LLMProvider to generate human-readable explanations
-    of token risk. The service handles errors and logging.
+    of token risk. The service handles errors, logging, and timeouts.
 
     It does NOT:
     - Fetch token data (that's TokenDataAggregator's job)
@@ -35,14 +40,16 @@ class ExplainService:
         result = await service.explain(token_data, risk_level)
     """
 
-    def __init__(self, llm_provider: LLMProvider):
+    def __init__(self, llm_provider: LLMProvider, timeout: float = DEFAULT_LLM_TIMEOUT):
         """
         Initialize with an LLM provider.
 
         Args:
             llm_provider: LLMProvider implementation (mock or Claude)
+            timeout: Timeout for LLM calls in seconds
         """
         self._llm_provider = llm_provider
+        self._timeout = timeout
 
     async def explain(
         self,
@@ -71,9 +78,13 @@ class ExplainService:
         )
 
         try:
-            result = await self._llm_provider.generate_analysis(
-                token_data,
-                risk_level,
+            # Enforce timeout on LLM call
+            result = await asyncio.wait_for(
+                self._llm_provider.generate_analysis(
+                    token_data,
+                    risk_level,
+                ),
+                timeout=self._timeout,
             )
 
             logger.debug(
@@ -82,6 +93,13 @@ class ExplainService:
             )
 
             return result
+
+        except TimeoutError:
+            logger.error(f"LLM timeout after {self._timeout}s")
+            raise LLMError(
+                message="Сервис анализа не ответил вовремя. Попробуйте позже.",
+                technical_message=f"LLM timeout after {self._timeout}s",
+            ) from None
 
         except LLMError:
             # Re-raise our own exceptions
@@ -93,4 +111,4 @@ class ExplainService:
             raise LLMError(
                 message="Не удалось сгенерировать анализ.",
                 technical_message=f"LLM error: {type(e).__name__}: {e}",
-            )
+            ) from e

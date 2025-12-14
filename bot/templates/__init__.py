@@ -1,14 +1,14 @@
 """Message templates."""
 
 from bot.templates.messages import (
-    WELCOME,
+    ANALYZING,
+    ERROR_GENERIC,
+    ERROR_SERVICE_UNAVAILABLE,
+    ERROR_TRY_LATER,
     HELP,
     INVALID_ADDRESS,
-    ERROR_GENERIC,
-    ERROR_TRY_LATER,
-    ERROR_SERVICE_UNAVAILABLE,
+    WELCOME,
     WRONG_CHAIN,
-    ANALYZING,
 )
 
 __all__ = [

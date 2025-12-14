@@ -12,16 +12,17 @@ Exception handling priority:
 """
 
 import logging
-from typing import Any, Awaitable, Callable, Dict
+from collections.abc import Awaitable, Callable
+from typing import Any
 
 from aiogram import BaseMiddleware
-from aiogram.types import Update, Message
+from aiogram.types import Message, Update
 
 from bot.core.exceptions import (
-    TokenBrainError,
-    ValidationError,
     DataFetchError,
     LLMError,
+    TokenBrainError,
+    ValidationError,
 )
 from bot.templates.messages import (
     ERROR_GENERIC,
@@ -50,9 +51,9 @@ class ErrorHandlerMiddleware(BaseMiddleware):
 
     async def __call__(
         self,
-        handler: Callable[[Update, Dict[str, Any]], Awaitable[Any]],
+        handler: Callable[[Update, dict[str, Any]], Awaitable[Any]],
         event: Update,
-        data: Dict[str, Any],
+        data: dict[str, Any],
     ) -> Any:
         """
         Process update with error handling.
@@ -73,14 +74,16 @@ class ErrorHandlerMiddleware(BaseMiddleware):
 
         except DataFetchError as e:
             await self._handle_error(
-                event, e,
+                event,
+                e,
                 fallback_message=ERROR_TRY_LATER,
                 log_level="error",
             )
 
         except LLMError as e:
             await self._handle_error(
-                event, e,
+                event,
+                e,
                 fallback_message=ERROR_SERVICE_UNAVAILABLE,
                 log_level="error",
             )

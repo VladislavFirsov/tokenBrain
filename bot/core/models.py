@@ -9,7 +9,6 @@ Models provide:
 """
 
 from enum import Enum
-from typing import Optional
 
 from pydantic import BaseModel, Field
 
@@ -92,10 +91,10 @@ class TokenData(BaseModel):
     address: str
     """Token contract address"""
 
-    name: Optional[str] = None
+    name: str | None = None
     """Token name (e.g., 'Bonk')"""
 
-    symbol: Optional[str] = None
+    symbol: str | None = None
     """Token symbol (e.g., 'BONK')"""
 
     # Key metrics

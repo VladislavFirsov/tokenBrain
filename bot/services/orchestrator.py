@@ -15,9 +15,9 @@ Workflow:
 import logging
 
 from bot.core.models import AnalysisResult
-from bot.services.token_data.aggregator import TokenDataAggregator
-from bot.services.risk.service import RiskService
 from bot.services.explain.service import ExplainService
+from bot.services.risk.service import RiskService
+from bot.services.token_data.aggregator import TokenDataAggregator
 
 logger = logging.getLogger(__name__)
 
@@ -85,7 +85,9 @@ class AnalyzerOrchestrator:
 
         # Step 1: Fetch token data
         token_data = await self._aggregator.get_token_data(token_address)
-        logger.debug(f"Token data: {token_data.symbol}, ${token_data.liquidity_usd:,.0f}")
+        logger.debug(
+            f"Token data: {token_data.symbol}, ${token_data.liquidity_usd:,.0f}"
+        )
 
         # Step 2: Calculate risk level
         risk_level = self._risk_service.calculate_risk(token_data)

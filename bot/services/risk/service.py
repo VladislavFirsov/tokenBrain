@@ -14,7 +14,7 @@ Risk Rules (MVP):
 import logging
 from dataclasses import dataclass
 
-from bot.core.models import TokenData, RiskLevel
+from bot.core.models import RiskLevel, TokenData
 
 logger = logging.getLogger(__name__)
 
@@ -119,7 +119,9 @@ class RiskService:
 
         # Low liquidity = can't exit position
         if data.liquidity_usd < t.liquidity_high_risk:
-            logger.debug(f"HIGH risk: liquidity {data.liquidity_usd} < {t.liquidity_high_risk}")
+            logger.debug(
+                f"HIGH risk: liquidity {data.liquidity_usd} < {t.liquidity_high_risk}"
+            )
             return True
 
         # Too new = unproven, could be rugpull

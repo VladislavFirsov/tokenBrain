@@ -5,14 +5,14 @@ Tests error handling and logging middleware behavior.
 Uses mock objects to simulate aiogram updates.
 """
 
-import pytest
 from unittest.mock import AsyncMock, MagicMock, patch
 
+import pytest
+
 from bot.core.exceptions import (
-    TokenBrainError,
-    ValidationError,
     DataFetchError,
     LLMError,
+    ValidationError,
 )
 from bot.middleware.error_handler import ErrorHandlerMiddleware
 from bot.middleware.logging import LoggingMiddleware

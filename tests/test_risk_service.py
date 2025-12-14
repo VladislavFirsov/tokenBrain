@@ -9,10 +9,8 @@ Tests cover:
 - Risk factor detection
 """
 
-import pytest
-
-from bot.core.models import TokenData, RiskLevel, RugpullFlags, SocialInfo
-from bot.services.risk.service import RiskService, RiskThresholds
+from bot.core.models import RiskLevel, TokenData
+from bot.services.risk.service import RiskService
 
 
 class TestRiskServiceHighRisk:
