@@ -179,6 +179,25 @@ class TestHeliusProviderErrors:
     """Tests for error handling."""
 
     @pytest.mark.asyncio
+    async def test_timeout_raises_data_fetch_error(
+        self,
+        helius_provider: HeliusTokenDataProvider,
+    ) -> None:
+        """Timeout should raise DataFetchError."""
+
+        with aioresponses() as m:
+            url = f"{HELIUS_RPC_URL}/?api-key=test-api-key"
+            m.post(url, exception=TimeoutError())
+            m.post(url, exception=TimeoutError())
+
+            with pytest.raises(DataFetchError) as exc_info:
+                await helius_provider.get_token_data(
+                    "TestToken11111111111111111111111111111111"
+                )
+
+            assert "временно недоступен" in exc_info.value.message.lower()
+
+    @pytest.mark.asyncio
     async def test_handles_api_error(
         self,
         helius_provider: HeliusTokenDataProvider,
@@ -195,16 +214,66 @@ class TestHeliusProviderErrors:
                 )
 
     @pytest.mark.asyncio
-    async def test_handles_partial_data(
+    async def test_both_not_found_raises_token_not_found(
+        self,
+        helius_provider: HeliusTokenDataProvider,
+    ) -> None:
+        """Both APIs returning 'not found' should raise DataFetchError."""
+        not_found_response = {
+            "jsonrpc": "2.0",
+            "id": "1",
+            "error": {"message": "Account not found"},
+        }
+
+        with aioresponses() as m:
+            url = f"{HELIUS_RPC_URL}/?api-key=test-api-key"
+            m.post(url, payload=not_found_response)
+            m.post(url, payload=not_found_response)
+
+            with pytest.raises(DataFetchError) as exc_info:
+                await helius_provider.get_token_data(
+                    "NonExistent111111111111111111111111111111"
+                )
+
+            assert "токен не найден" in exc_info.value.message.lower()
+
+    @pytest.mark.asyncio
+    async def test_http_500_raises_error(
         self,
         helius_provider: HeliusTokenDataProvider,
         mock_asset_response: dict,
     ) -> None:
-        """Should handle when one API call fails."""
+        """HTTP 500 from any call should raise DataFetchError."""
         with aioresponses() as m:
             url = f"{HELIUS_RPC_URL}/?api-key=test-api-key"
             m.post(url, payload=mock_asset_response)
-            m.post(url, status=500)  # Holders API fails
+            m.post(url, status=500)  # Holders API returns 500
+
+            # Should raise error (API unavailable)
+            with pytest.raises(DataFetchError) as exc_info:
+                await helius_provider.get_token_data(
+                    "TestToken11111111111111111111111111111111"
+                )
+
+            assert "недоступен" in exc_info.value.message.lower()
+
+    @pytest.mark.asyncio
+    async def test_handles_partial_data_not_found(
+        self,
+        helius_provider: HeliusTokenDataProvider,
+        mock_asset_response: dict,
+    ) -> None:
+        """Asset success + holders 'not found' should return TokenData."""
+        not_found_response = {
+            "jsonrpc": "2.0",
+            "id": "1",
+            "error": {"message": "Invalid token account"},
+        }
+
+        with aioresponses() as m:
+            url = f"{HELIUS_RPC_URL}/?api-key=test-api-key"
+            m.post(url, payload=mock_asset_response)
+            m.post(url, payload=not_found_response)  # Holders not found
 
             # Should still return data from asset API
             result = await helius_provider.get_token_data(

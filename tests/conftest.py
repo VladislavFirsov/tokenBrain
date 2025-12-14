@@ -41,6 +41,8 @@ def high_risk_token() -> TokenData:
         mint_authority_exists=True,
         freeze_authority_exists=True,
         top1_holder_percent=60.0,
+        top2_holder_percent=15.0,
+        top5_holders_percent=80.0,
         rugpull_flags=RugpullFlags(
             new_contract=True,
             low_liquidity=True,
@@ -65,6 +67,8 @@ def medium_risk_token() -> TokenData:
         mint_authority_exists=False,
         freeze_authority_exists=False,
         top1_holder_percent=None,  # Unknown — blocks LOW
+        top2_holder_percent=None,  # Unknown — blocks LOW
+        top5_holders_percent=35.0,
         rugpull_flags=RugpullFlags(),
         social=SocialInfo(
             twitter_exists=True,
@@ -88,6 +92,7 @@ def low_risk_token() -> TokenData:
         mint_authority_exists=False,
         freeze_authority_exists=False,
         top1_holder_percent=10.0,
+        top2_holder_percent=8.0,
         top5_holders_percent=20.0,
         rugpull_flags=RugpullFlags(),
         social=SocialInfo(

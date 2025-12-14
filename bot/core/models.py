@@ -128,6 +128,9 @@ class TokenData(BaseModel):
     top1_holder_percent: float | None = None
     """Percentage of supply held by largest wallet"""
 
+    top2_holder_percent: float | None = None
+    """Percentage of supply held by second largest wallet"""
+
     top5_holders_percent: float | None = None
     """Percentage of supply held by top 5 wallets"""
 

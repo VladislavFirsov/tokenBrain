@@ -39,6 +39,29 @@ def setup_logging(level: str) -> None:
     logging.getLogger("aiohttp").setLevel(logging.WARNING)
 
 
+def validate_production_config(settings) -> None:
+    """
+    Validate that required API keys are present in production mode.
+
+    Raises:
+        RuntimeError: If required env vars are missing.
+    """
+    if settings.use_mock_services:
+        return  # Mock mode doesn't need real API keys
+
+    missing = []
+    if not settings.helius_api_key:
+        missing.append("HELIUS_API_KEY")
+    if not settings.openrouter_api_key:
+        missing.append("OPENROUTER_API_KEY")
+
+    if missing:
+        raise RuntimeError(
+            f"Missing required env vars for production mode: {', '.join(missing)}. "
+            f"Set USE_MOCK_SERVICES=true for development without API keys."
+        )
+
+
 async def main() -> None:
     """
     Main application entry point.
@@ -55,8 +78,11 @@ async def main() -> None:
     # Load configuration
     settings = get_settings()
 
-    # Setup logging
+    # Setup logging first (so validation errors are logged)
     setup_logging(settings.log_level)
+
+    # Validate production config
+    validate_production_config(settings)
     logger = logging.getLogger(__name__)
 
     logger.info("=" * 50)

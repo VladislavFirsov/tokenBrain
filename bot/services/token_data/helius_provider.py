@@ -26,8 +26,8 @@ logger = logging.getLogger(__name__)
 # Helius API endpoint
 HELIUS_RPC_URL = "https://mainnet.helius-rpc.com"
 
-# Default timeout (increased for popular tokens with many holders)
-DEFAULT_TIMEOUT = 5.0
+# Default timeout (increased for slower API responses)
+DEFAULT_TIMEOUT = 10.0
 
 
 class HeliusTokenDataProvider:
@@ -38,7 +38,7 @@ class HeliusTokenDataProvider:
     - getAsset (DAS API) for token metadata and authorities
     - getTokenLargestAccounts (RPC) for holder concentration
 
-    Timeout: 1.2 seconds (Telegram UX requirement)
+    Timeout: Default 10.0 seconds. Factory configures 1.2s for Telegram UX.
     Retry: 1 time on failure
     """
 
@@ -65,7 +65,7 @@ class HeliusTokenDataProvider:
             TokenData with all available information
 
         Raises:
-            DataFetchError: If fetching fails after retries
+            DataFetchError: If API is unavailable or token not found
         """
         logger.info(f"Fetching token data from Helius: {address[:8]}...")
 
@@ -75,36 +75,36 @@ class HeliusTokenDataProvider:
                 asset_task = self._fetch_asset(session, address)
                 holders_task = self._fetch_largest_accounts(session, address)
 
-                asset_data, holders_data = await asyncio.gather(
+                results = await asyncio.gather(
                     asset_task, holders_task, return_exceptions=True
                 )
 
-                # Handle partial failures
-                if isinstance(asset_data, Exception):
-                    logger.warning(f"Failed to fetch asset: {asset_data}")
-                    asset_data = None
+                asset_result, holders_result = results
 
-                if isinstance(holders_data, Exception):
-                    logger.warning(f"Failed to fetch holders: {holders_data}")
-                    holders_data = None
+                # If ANY result is DataFetchError → API is unavailable, raise it
+                for result in results:
+                    if isinstance(result, DataFetchError):
+                        raise result
+                    if isinstance(result, Exception):
+                        # Unexpected exception → treat as API error
+                        logger.error(f"Unexpected error in API call: {result}")
+                        raise DataFetchError(
+                            message="Ошибка получения данных.",
+                            technical_message=f"Unexpected: {type(result).__name__}: {result}",
+                        )
 
-                # If both failed, raise error
-                if asset_data is None and holders_data is None:
+                # Both None = token doesn't exist (API worked but no data)
+                if asset_result is None and holders_result is None:
                     raise DataFetchError(
-                        message="Не удалось получить данные о токене.",
-                        technical_message="Both Helius API calls failed",
+                        message="Токен не найден. Проверьте адрес.",
+                        technical_message=f"Token {address} not found in Helius",
                     )
 
-                return self._build_token_data(address, asset_data, holders_data)
+                # At least one succeeded → build TokenData with available data
+                return self._build_token_data(address, asset_result, holders_result)
 
         except DataFetchError:
             raise
-        except TimeoutError:
-            logger.error(f"Helius timeout after {self._timeout}s")
-            raise DataFetchError(
-                message="Запрос занял слишком много времени.",
-                technical_message=f"Helius timeout after {self._timeout}s",
-            ) from None
         except Exception as e:
             logger.exception(f"Unexpected Helius error: {e}")
             raise DataFetchError(
@@ -123,6 +123,13 @@ class HeliusTokenDataProvider:
         - mint_authority, freeze_authority
         - supply, decimals
         - mutable (metadata)
+
+        Raises:
+            DataFetchError: On API unavailability (timeout, HTTP 5xx, network error)
+
+        Returns:
+            dict: Asset data if found
+            None: If token not found (HTTP 4xx or RPC "not found" error)
         """
         payload = {
             "jsonrpc": "2.0",
@@ -137,6 +144,14 @@ class HeliusTokenDataProvider:
             async with session.post(
                 self._base_url, json=payload, timeout=timeout
             ) as resp:
+                # HTTP 5xx = API unavailable → raise
+                if resp.status >= 500:
+                    raise DataFetchError(
+                        message="Сервис временно недоступен. Попробуйте позже.",
+                        technical_message=f"getAsset HTTP {resp.status}",
+                    )
+
+                # HTTP 4xx = client error (invalid address, etc) → token not found
                 if resp.status != 200:
                     logger.warning(f"getAsset returned {resp.status}")
                     return None
@@ -144,25 +159,46 @@ class HeliusTokenDataProvider:
                 data = await resp.json()
 
                 if "error" in data:
-                    logger.warning(f"getAsset error: {data['error']}")
-                    return None
+                    error_msg = str(data.get("error", "")).lower()
+                    # RPC "not found" / "invalid" errors → token doesn't exist
+                    if "not found" in error_msg or "invalid" in error_msg:
+                        logger.info(f"getAsset: token not found ({error_msg})")
+                        return None
+                    # Other RPC errors → API problem → raise
+                    raise DataFetchError(
+                        message="Не удалось получить данные о токене.",
+                        technical_message=f"getAsset RPC error: {data['error']}",
+                    )
 
                 return data.get("result")
 
+        except DataFetchError:
+            raise  # Re-raise our errors
         except TimeoutError:
-            logger.warning("getAsset timeout")
-            return None
-        except Exception as e:
-            logger.warning(f"getAsset failed: {e}")
-            return None
+            raise DataFetchError(
+                message="Сервис временно недоступен. Попробуйте позже.",
+                technical_message="getAsset timeout",
+            ) from None
+        except aiohttp.ClientError as e:
+            raise DataFetchError(
+                message="Не удалось получить данные. Проверьте подключение.",
+                technical_message=f"getAsset network error: {e}",
+            ) from None
 
     async def _fetch_largest_accounts(
         self, session: aiohttp.ClientSession, address: str
-    ) -> dict | None:
+    ) -> list | None:
         """
         Fetch largest token accounts via getTokenLargestAccounts (RPC).
 
         Returns up to 20 largest holders with their balances.
+
+        Raises:
+            DataFetchError: On API unavailability (timeout, HTTP 5xx, network error)
+
+        Returns:
+            list: Holder accounts if found
+            None: If token not found (HTTP 4xx or RPC "not found" error)
         """
         payload = {
             "jsonrpc": "2.0",
@@ -177,6 +213,14 @@ class HeliusTokenDataProvider:
             async with session.post(
                 self._base_url, json=payload, timeout=timeout
             ) as resp:
+                # HTTP 5xx = API unavailable → raise
+                if resp.status >= 500:
+                    raise DataFetchError(
+                        message="Сервис временно недоступен. Попробуйте позже.",
+                        technical_message=f"getTokenLargestAccounts HTTP {resp.status}",
+                    )
+
+                # HTTP 4xx = client error → token not found
                 if resp.status != 200:
                     logger.warning(f"getTokenLargestAccounts returned {resp.status}")
                     return None
@@ -184,16 +228,28 @@ class HeliusTokenDataProvider:
                 data = await resp.json()
 
                 if "error" in data:
-                    logger.warning(f"getTokenLargestAccounts error: {data['error']}")
+                    # Any RPC error for holders = data unavailable, not API failure
+                    # Examples: "not found", "invalid", "too many accounts", etc.
+                    # Holders data is optional - we can proceed without it
+                    error_msg = data.get("error", {})
+                    if isinstance(error_msg, dict):
+                        error_msg = error_msg.get("message", str(error_msg))
+                    logger.info(
+                        f"getTokenLargestAccounts: holders unavailable ({error_msg})"
+                    )
                     return None
 
                 return data.get("result", {}).get("value")
 
+        except DataFetchError:
+            raise  # Re-raise HTTP 5xx errors only
         except TimeoutError:
-            logger.warning("getTokenLargestAccounts timeout")
+            # Timeout for holders = data unavailable, not critical
+            logger.info("getTokenLargestAccounts: timeout, proceeding without holders")
             return None
-        except Exception as e:
-            logger.warning(f"getTokenLargestAccounts failed: {e}")
+        except aiohttp.ClientError as e:
+            # Network error for holders = data unavailable, not critical
+            logger.info(f"getTokenLargestAccounts: network error ({e}), proceeding without holders")
             return None
 
     def _build_token_data(
@@ -235,6 +291,7 @@ class HeliusTokenDataProvider:
 
         # Calculate holder concentration
         top1_percent = None
+        top2_percent = None
         top5_percent = None
         top10_percent = 0.0
 
@@ -243,6 +300,7 @@ class HeliusTokenDataProvider:
                 holders_data, supply, decimals
             )
             top1_percent = concentrations.get("top1")
+            top2_percent = concentrations.get("top2")
             top5_percent = concentrations.get("top5")
             top10_percent = concentrations.get("top10", 0.0)
 
@@ -275,6 +333,7 @@ class HeliusTokenDataProvider:
             freeze_authority_exists=freeze_authority_exists,
             metadata_mutable=metadata_mutable,
             top1_holder_percent=round(top1_percent, 2) if top1_percent else None,
+            top2_holder_percent=round(top2_percent, 2) if top2_percent else None,
             top5_holders_percent=round(top5_percent, 2) if top5_percent else None,
             rugpull_flags=rugpull_flags,
             social=SocialInfo(),  # Helius doesn't provide social info
@@ -319,6 +378,10 @@ class HeliusTokenDataProvider:
         if len(sorted_holders) >= 1:
             top1_amount = float(sorted_holders[0].get("uiAmount", 0) or 0)
             result["top1"] = (top1_amount / ui_supply) * 100
+
+        if len(sorted_holders) >= 2:
+            top2_amount = float(sorted_holders[1].get("uiAmount", 0) or 0)
+            result["top2"] = (top2_amount / ui_supply) * 100
 
         if len(sorted_holders) >= 5:
             top5_amount = sum(

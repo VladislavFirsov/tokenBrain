@@ -38,24 +38,33 @@ SAFE_PROTOCOL_TOKENS = {
 @dataclass(frozen=True)
 class RiskThresholds:
     """
-    Threshold values for risk calculation.
+    Threshold values for risk calculation v2.2.
 
     Frozen dataclass ensures immutability.
     Can be loaded from config in the future.
     """
 
-    # Liquidity thresholds (USD) - contextual signals
+    # Liquidity thresholds (USD)
     liquidity_high_risk: float = 20_000
     liquidity_low_risk: float = 80_000
 
-    # Age thresholds (days) - contextual signals
+    # Age thresholds (days)
     age_high_risk: int = 7
     age_low_risk: int = 30
 
-    # Holder concentration thresholds (%) - critical signals
-    top10_high_risk: float = 60.0
-    top1_high_risk: float = 50.0  # Single wallet controlling majority
-    top5_warning: float = 40.0  # Warning level for top 5
+    # Holder concentration - HIGH risk triggers
+    top1_high_risk: float = 50.0       # Single wallet > 50% = HIGH
+    top5_high_risk: float = 50.0       # Top 5 > 50% = HIGH (standalone)
+    top10_high_risk: float = 65.0      # Top 10 > 65% = HIGH
+    top1_top2_high_risk: float = 40.0  # (top1 + top2) > 40% = HIGH
+
+    # Holder concentration - LOW risk requirements (stricter)
+    top1_low_risk: float = 25.0    # Top 1 must be ≤ 25% for LOW
+    top5_low_risk: float = 40.0    # Top 5 must be ≤ 40% for LOW
+    top10_low_risk: float = 55.0   # Top 10 must be ≤ 55% for LOW
+
+    # Holders count - LOW risk requirement
+    holders_low_risk: int = 100    # Must have ≥ 100 holders for LOW
 
 
 class RiskService:
@@ -146,32 +155,37 @@ class RiskService:
 
     def _extract_signals(self, data: TokenData) -> dict[str, Any]:
         """
-        Extract all risk signals from token data.
+        Extract all risk signals from token data (v2.2).
 
         Returns dict with None for unknown values (for LLM Anti-Hallucination).
         """
         return {
-            # Critical signals (affect LOW-gate)
+            # Critical signals (6) — affect LOW-gate
             "mint_authority_exists": data.mint_authority_exists,
             "freeze_authority_exists": data.freeze_authority_exists,
             "top1_holder_percent": data.top1_holder_percent,
+            "top2_holder_percent": data.top2_holder_percent,
+            "top5_holders_percent": data.top5_holders_percent,
             "top10_holders_percent": data.top10_holders_percent,
-            # Contextual signals (for explanation quality)
+            # Contextual signals (4) — for explanation quality
             "age_days": data.age_days,
             "liquidity_usd": data.liquidity_usd,
             "metadata_mutable": data.metadata_mutable,
+            "holders": data.holders,
         }
 
     def _calculate_safety_completeness(self, signals: dict[str, Any]) -> float:
         """
         Calculate completeness of critical signals (affects LOW-gate).
 
-        Critical signals: mint_authority, freeze_authority, top1, top10
+        Critical signals (6): mint, freeze, top1, top2, top5, top10
         """
         critical_signals = [
             "mint_authority_exists",
             "freeze_authority_exists",
             "top1_holder_percent",
+            "top2_holder_percent",
+            "top5_holders_percent",
             "top10_holders_percent",
         ]
         known = sum(1 for s in critical_signals if signals.get(s) is not None)
@@ -181,10 +195,15 @@ class RiskService:
         """
         Calculate completeness of contextual signals (affects explanation quality).
 
-        Contextual signals: age, liquidity, metadata_mutable
+        Contextual signals (4): age, liquidity, metadata_mutable, holders
         """
-        context_signals = ["age_days", "liquidity_usd", "metadata_mutable"]
-        known = sum(1 for s in context_signals if signals.get(s) is not None)
+        context_signals = ["age_days", "liquidity_usd", "metadata_mutable", "holders"]
+        # holders is always known (has default 0), so check if it's > 0 for "known"
+        known = sum(
+            1
+            for s in context_signals
+            if (signals.get(s) is not None and (s != "holders" or signals.get(s) > 0))
+        )
         return known / len(context_signals)
 
     def _log_risk_check(
@@ -210,17 +229,20 @@ class RiskService:
 
     def _is_high_risk(self, data: TokenData) -> bool:
         """
-        Check if token meets ANY high risk condition.
+        Check if token meets ANY high risk condition (v2.2).
 
         HIGH risk triggers (immediate):
         - mint_authority_exists == True
         - freeze_authority_exists == True
         - top1_holder_percent > 50%
-        - top10_holders_percent > 60%
+        - top5_holders_percent > 50% (standalone)
+        - top10_holders_percent > 65%
+        - (top1 + top2) > 40%
+        - age_days is None AND liquidity_usd is None (full opacity)
 
-        Усиливающие сигналы (HIGH only if known):
-        - age_days < 7 (if known)
-        - liquidity_usd < 20k (if known)
+        Contextual signals (HIGH only if known):
+        - age_days < 7
+        - liquidity_usd < 20k
 
         Args:
             data: Token data to check
@@ -248,6 +270,16 @@ class RiskService:
             )
             return True
 
+        # top5 > 50% standalone (no combo with age)
+        if (
+            data.top5_holders_percent is not None
+            and data.top5_holders_percent > t.top5_high_risk
+        ):
+            logger.debug(
+                f"HIGH risk: top5 {data.top5_holders_percent}% > {t.top5_high_risk}%"
+            )
+            return True
+
         if (
             data.top10_holders_percent is not None
             and data.top10_holders_percent > t.top10_high_risk
@@ -255,6 +287,23 @@ class RiskService:
             logger.debug(
                 f"HIGH risk: top10 {data.top10_holders_percent}% > {t.top10_high_risk}%"
             )
+            return True
+
+        # (top1 + top2) > 40% — two whales control too much
+        if (
+            data.top1_holder_percent is not None
+            and data.top2_holder_percent is not None
+        ):
+            top1_top2_sum = data.top1_holder_percent + data.top2_holder_percent
+            if top1_top2_sum > t.top1_top2_high_risk:
+                logger.debug(
+                    f"HIGH risk: (top1 + top2) = {top1_top2_sum}% > {t.top1_top2_high_risk}%"
+                )
+                return True
+
+        # Full opacity: both age AND liquidity unknown = HIGH
+        if data.age_days is None and data.liquidity_usd is None:
+            logger.debug("HIGH risk: both age and liquidity unknown (full opacity)")
             return True
 
         # Contextual signals — HIGH only if known and dangerous
@@ -275,18 +324,20 @@ class RiskService:
 
     def _is_low_risk(self, data: TokenData) -> bool:
         """
-        Check if token meets ALL low risk conditions.
+        Check if token meets ALL low risk conditions (v2.2).
 
-        LOW is ALLOWED only if:
-        1. ALL 4 critical signals are NOT None
-        2. mint_authority_exists == False
-        3. freeze_authority_exists == False
-        4. top1_holder_percent <= 50%
-        5. top10_holders_percent <= 60%
-        6. If age known: age_days >= 30
-        7. If liquidity known: liquidity_usd >= 80k
+        LOW is ALLOWED only if ALL conditions are met:
+        1. mint_authority_exists == False (known)
+        2. freeze_authority_exists == False (known)
+        3. top1_holder_percent ≤ 25% (known)
+        4. top2_holder_percent (known) — for safety completeness
+        5. top5_holders_percent ≤ 40% (known)
+        6. top10_holders_percent ≤ 55% (known)
+        7. liquidity_usd ≥ 80k (known)
+        8. age_days ≥ 30 (known)
+        9. holders ≥ 100 (if known)
 
-        If ANY critical signal is None → LOW is FORBIDDEN.
+        If ANY critical data is None or above threshold → LOW is FORBIDDEN.
 
         Args:
             data: Token data to check
@@ -296,7 +347,7 @@ class RiskService:
         """
         t = self._thresholds
 
-        # LOW ЗАПРЕЩЁН если любой КРИТИЧЕСКИЙ сигнал = None
+        # LOW ЗАПРЕЩЁН если любой критический сигнал = None
         if data.mint_authority_exists is None:
             logger.debug("LOW forbidden: mint_authority_exists is None")
             return False
@@ -306,34 +357,64 @@ class RiskService:
         if data.top1_holder_percent is None:
             logger.debug("LOW forbidden: top1_holder_percent is None")
             return False
+        if data.top2_holder_percent is None:
+            logger.debug("LOW forbidden: top2_holder_percent is None")
+            return False
+        if data.top5_holders_percent is None:
+            logger.debug("LOW forbidden: top5_holders_percent is None")
+            return False
         if data.top10_holders_percent is None:
             logger.debug("LOW forbidden: top10_holders_percent is None")
             return False
 
-        # LOW ЗАПРЕЩЁН если любой критический сигнал опасен
+        # LOW ЗАПРЕЩЁН если authority активны
         if data.mint_authority_exists is True:
             return False
         if data.freeze_authority_exists is True:
             return False
-        if data.top1_holder_percent > t.top1_high_risk:
+
+        # LOW ЗАПРЕЩЁН если концентрация выше строгих порогов
+        if data.top1_holder_percent > t.top1_low_risk:
+            logger.debug(f"LOW forbidden: top1 {data.top1_holder_percent}% > {t.top1_low_risk}%")
             return False
-        if data.top10_holders_percent > t.top10_high_risk:
+        if data.top5_holders_percent > t.top5_low_risk:
+            logger.debug(f"LOW forbidden: top5 {data.top5_holders_percent}% > {t.top5_low_risk}%")
+            return False
+        if data.top10_holders_percent > t.top10_low_risk:
+            logger.debug(f"LOW forbidden: top10 {data.top10_holders_percent}% > {t.top10_low_risk}%")
             return False
 
-        # Контекстные: проверяем ТОЛЬКО если известны (не блокируют LOW если None)
-        if data.liquidity_usd is not None and data.liquidity_usd < t.liquidity_low_risk:
+        # LOW ЗАПРЕЩЁН если liquidity/age неизвестны или недостаточны
+        if data.liquidity_usd is None:
+            logger.debug("LOW forbidden: liquidity_usd is None")
             return False
-        if data.age_days is not None and data.age_days < t.age_low_risk:
+        if data.liquidity_usd < t.liquidity_low_risk:
+            logger.debug(f"LOW forbidden: liquidity {data.liquidity_usd} < {t.liquidity_low_risk}")
+            return False
+
+        if data.age_days is None:
+            logger.debug("LOW forbidden: age_days is None")
+            return False
+        if data.age_days < t.age_low_risk:
+            logger.debug(f"LOW forbidden: age {data.age_days} < {t.age_low_risk}")
+            return False
+
+        # LOW ЗАПРЕЩЁН если мало холдеров (если известно)
+        if data.holders < t.holders_low_risk:
+            logger.debug(f"LOW forbidden: holders {data.holders} < {t.holders_low_risk}")
             return False
 
         return True
 
     def get_risk_factors(self, data: TokenData) -> list[str]:
         """
-        Get list of risk factors for a token.
+        Get list of risk factors for a token (v2.2).
 
         Returns human-readable descriptions for LLM.
         LLM must use ONLY these factors, not add new ones.
+
+        Includes UX Confidence Gate: if total_completeness < 0.5,
+        adds warning about insufficient data.
 
         Args:
             data: Token data to analyze
@@ -344,13 +425,29 @@ class RiskService:
         t = self._thresholds
         factors: list[str] = []
 
-        # Unknown critical signals (most important for transparency)
+        # Calculate completeness for UX Confidence Gate
+        signals = self._extract_signals(data)
+        safety_score = self._calculate_safety_completeness(signals)
+        context_score = self._calculate_context_completeness(signals)
+        total_completeness = (safety_score * 0.7) + (context_score * 0.3)
+
+        # UX Confidence Gate: if total completeness < 50%, warn user
+        if total_completeness < 0.5:
+            factors.append("⚠️ Недостаточно данных для уверенной оценки")
+
+        # Full opacity: both age AND liquidity unknown = HIGH risk factor
+        if data.age_days is None and data.liquidity_usd is None:
+            factors.append("Полная непрозрачность: возраст и ликвидность неизвестны")
+
+        # Unknown critical signals (for transparency)
         if data.mint_authority_exists is None:
             factors.append("Данные о mint authority недоступны")
         if data.freeze_authority_exists is None:
             factors.append("Данные о freeze authority недоступны")
         if data.top1_holder_percent is None:
             factors.append("Данные о крупнейшем держателе недоступны")
+        if data.top2_holder_percent is None:
+            factors.append("Данные о втором крупнейшем держателе недоступны")
         if data.top10_holders_percent is None:
             factors.append("Данные о распределении токенов недоступны")
 
@@ -369,7 +466,27 @@ class RiskService:
                 f"Один кошелёк контролирует {data.top1_holder_percent:.0f}% токенов"
             )
 
-        # Top 10 concentration
+        # (top1 + top2) > 40% — two whales control too much (v2.2)
+        if (
+            data.top1_holder_percent is not None
+            and data.top2_holder_percent is not None
+        ):
+            top1_top2_sum = data.top1_holder_percent + data.top2_holder_percent
+            if top1_top2_sum > t.top1_top2_high_risk:
+                factors.append(
+                    f"Два крупнейших кошелька контролируют {top1_top2_sum:.0f}% токенов"
+                )
+
+        # Top 5 > 50% standalone HIGH (v2.2)
+        if (
+            data.top5_holders_percent is not None
+            and data.top5_holders_percent > t.top5_high_risk
+        ):
+            factors.append(
+                f"Топ-5 держателей контролируют {data.top5_holders_percent:.0f}% токенов"
+            )
+
+        # Top 10 concentration > 65%
         if (
             data.top10_holders_percent is not None
             and data.top10_holders_percent > t.top10_high_risk
@@ -379,9 +496,20 @@ class RiskService:
                 f"(топ-10 = {data.top10_holders_percent:.0f}%)"
             )
 
+        # Top 5 moderate (40-50%) — warning, not HIGH
+        if (
+            data.top5_holders_percent is not None
+            and t.top5_low_risk < data.top5_holders_percent <= t.top5_high_risk
+        ):
+            factors.append(
+                f"Умеренная концентрация у топ-5 ({data.top5_holders_percent:.0f}%)"
+            )
+
         # Liquidity factors (contextual)
         if data.liquidity_usd is None:
-            factors.append("Ликвидность неизвестна")
+            # Skip if already covered by "full opacity"
+            if data.age_days is not None:
+                factors.append("Ликвидность неизвестна")
         elif data.liquidity_usd < t.liquidity_high_risk:
             factors.append(f"Очень низкая ликвидность (${data.liquidity_usd:,.0f})")
         elif data.liquidity_usd < t.liquidity_low_risk:
@@ -389,24 +517,17 @@ class RiskService:
 
         # Age factors (contextual)
         if data.age_days is None:
-            factors.append("Возраст токена неизвестен")
+            # Skip if already covered by "full opacity"
+            if data.liquidity_usd is not None:
+                factors.append("Возраст токена неизвестен")
         elif data.age_days < t.age_high_risk:
             factors.append(f"Очень новый токен ({data.age_days} дней)")
         elif data.age_days < t.age_low_risk:
             factors.append(f"Относительно новый токен ({data.age_days} дней)")
 
-        # Top 5 warning (not critical, but notable)
-        if (
-            data.top5_holders_percent is not None
-            and data.top5_holders_percent > t.top5_warning
-            and (
-                data.top10_holders_percent is None
-                or data.top10_holders_percent <= t.top10_high_risk
-            )
-        ):
-            factors.append(
-                f"Умеренная концентрация у топ-5 ({data.top5_holders_percent:.0f}%)"
-            )
+        # Low holders count — blocks LOW risk
+        if data.holders > 0 and data.holders < t.holders_low_risk:
+            factors.append(f"Мало держателей ({data.holders})")
 
         # Metadata mutable (warning, not critical)
         if data.metadata_mutable is True:

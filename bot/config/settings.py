@@ -2,13 +2,17 @@
 Application settings loaded from environment variables.
 
 Uses pydantic-settings for automatic loading from .env file.
-All settings have sensible defaults for development mode.
+All settings have sensible defaults for production mode.
 """
 
 from functools import lru_cache
+from pathlib import Path
 from typing import Literal
 
 from pydantic_settings import BaseSettings, SettingsConfigDict
+
+# Project root directory (where .env file is located)
+PROJECT_ROOT = Path(__file__).parent.parent.parent
 
 
 class Settings(BaseSettings):
@@ -36,7 +40,7 @@ class Settings(BaseSettings):
 
     # Environment
     environment: Literal["development", "production"] = "development"
-    use_mock_services: bool = True
+    use_mock_services: bool = False  # Production-safe default
 
     # Logging
     log_level: Literal["DEBUG", "INFO", "WARNING", "ERROR"] = "INFO"
@@ -55,7 +59,7 @@ class Settings(BaseSettings):
 
     # Pydantic settings config
     model_config = SettingsConfigDict(
-        env_file=".env",
+        env_file=PROJECT_ROOT / ".env",  # Absolute path to .env
         env_file_encoding="utf-8",
         # Case-insensitive env var names
         case_sensitive=False,

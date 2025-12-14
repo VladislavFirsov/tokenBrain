@@ -12,7 +12,7 @@ Tests cover:
 """
 
 from bot.core.models import RiskLevel, TokenData
-from bot.services.risk.service import SAFE_PROTOCOL_TOKENS, RiskService
+from bot.services.risk.service import RiskService
 
 
 class TestRiskServiceHighRisk:
@@ -137,10 +137,10 @@ class TestRiskServiceLowRisk:
         risk_service: RiskService,
         low_risk_token: TokenData,
     ) -> None:
-        """Top 10 holders must be <= 60% for LOW risk."""
-        low_risk_token.top10_holders_percent = 61  # Just over threshold
+        """Top 10 holders must be <= 55% for LOW risk (v2.2: HIGH threshold is 65%)."""
+        low_risk_token.top10_holders_percent = 66  # Just over HIGH threshold (65%)
         result = risk_service.calculate_risk(low_risk_token)
-        assert result.level == RiskLevel.HIGH  # High because > 60%
+        assert result.level == RiskLevel.HIGH  # High because > 65%
 
 
 class TestRiskServiceMediumRisk:
@@ -257,9 +257,11 @@ class TestRiskServiceSafeList:
             holders=0,
             tx_count_24h=0,
             mint_authority_exists=None,  # Unknown
+            age_days=30,  # Known age to avoid "full opacity" HIGH
+            liquidity_usd=50_000,  # Known liquidity to avoid "full opacity" HIGH
         )
         result = risk_service.calculate_risk(token)
-        # Should be MEDIUM because critical signal is None
+        # Should be MEDIUM because critical signal (mint_authority) is None
         assert result.level == RiskLevel.MEDIUM
 
 
@@ -318,6 +320,8 @@ class TestRiskServiceCustomThresholds:
             mint_authority_exists=False,
             freeze_authority_exists=False,
             top1_holder_percent=20.0,
+            top2_holder_percent=10.0,  # v2.2: must be known
+            top5_holders_percent=30.0,  # <= 40% (v2.2 top5_low_risk)
         )
         result = custom_risk_service.calculate_risk(token)
         assert result.level == RiskLevel.LOW
@@ -343,17 +347,112 @@ class TestRiskServiceCompleteness:
         """Partial known signals should give <100% safety completeness."""
         low_risk_token.mint_authority_exists = None
         result = risk_service.calculate_risk(low_risk_token)
-        assert result.safety_completeness == 0.75  # 3/4 known
+        # v2.2: 6 critical signals (mint, freeze, top1, top2, top5, top10)
+        # 5/6 known = 0.833...
+        assert abs(result.safety_completeness - (5 / 6)) < 0.01
 
     def test_context_completeness(
         self,
         risk_service: RiskService,
         low_risk_token: TokenData,
     ) -> None:
-        """Context completeness should reflect age/liquidity/metadata."""
+        """Context completeness should reflect age/liquidity/metadata/holders."""
         result = risk_service.calculate_risk(low_risk_token)
-        # age and liquidity known, metadata_mutable is None
-        assert result.context_completeness == 2 / 3
+        # v2.2: 4 context signals (age, liquidity, metadata_mutable, holders)
+        # age known, liquidity known, metadata_mutable is None, holders known (10_000)
+        # 3/4 = 0.75
+        assert result.context_completeness == 0.75
+
+
+class TestRiskServiceV22Rules:
+    """Tests for Risk Engine v2.2 specific rules."""
+
+    def test_top5_over_50_is_high_risk_standalone(
+        self,
+        risk_service: RiskService,
+        low_risk_token: TokenData,
+    ) -> None:
+        """top5 > 50% should be HIGH risk even with old age (v2.2 standalone rule)."""
+        low_risk_token.top5_holders_percent = 52.0  # > 50%
+        low_risk_token.age_days = 180  # Old token
+        result = risk_service.calculate_risk(low_risk_token)
+        assert result.level == RiskLevel.HIGH
+
+    def test_top1_top2_over_40_is_high_risk(
+        self,
+        risk_service: RiskService,
+        low_risk_token: TokenData,
+    ) -> None:
+        """(top1 + top2) > 40% should be HIGH risk (v2.2 two whales rule)."""
+        low_risk_token.top1_holder_percent = 22.0
+        low_risk_token.top2_holder_percent = 20.0  # sum = 42% > 40%
+        result = risk_service.calculate_risk(low_risk_token)
+        assert result.level == RiskLevel.HIGH
+
+    def test_full_opacity_is_high_risk(
+        self,
+        risk_service: RiskService,
+    ) -> None:
+        """age=None AND liquidity=None should be HIGH risk (v2.2 full opacity)."""
+        token = TokenData(
+            address="OpacityToken111111111111111111111111111111",
+            name="Opaque",
+            symbol="OPQ",
+            holders=500,
+            tx_count_24h=100,
+            mint_authority_exists=False,
+            freeze_authority_exists=False,
+            top10_holders_percent=30,
+            age_days=None,  # Unknown
+            liquidity_usd=None,  # Unknown
+        )
+        result = risk_service.calculate_risk(token)
+        assert result.level == RiskLevel.HIGH
+
+    def test_low_holders_blocks_low_risk(
+        self,
+        risk_service: RiskService,
+        low_risk_token: TokenData,
+    ) -> None:
+        """holders < 100 should block LOW risk (v2.2)."""
+        low_risk_token.holders = 50  # < 100
+        result = risk_service.calculate_risk(low_risk_token)
+        assert result.level == RiskLevel.MEDIUM  # Not LOW
+
+    def test_top2_none_blocks_low_risk(
+        self,
+        risk_service: RiskService,
+        low_risk_token: TokenData,
+    ) -> None:
+        """top2_holder_percent = None should block LOW risk (v2.2)."""
+        low_risk_token.top2_holder_percent = None
+        result = risk_service.calculate_risk(low_risk_token)
+        assert result.level == RiskLevel.MEDIUM  # Not LOW
+
+    def test_confidence_gate_factor_on_low_completeness(
+        self,
+        risk_service: RiskService,
+    ) -> None:
+        """UX Confidence Gate should add warning when total_completeness < 50%."""
+        # Token with many unknown signals
+        token = TokenData(
+            address="LowDataToken1111111111111111111111111111111",
+            name="Unknown",
+            symbol="UNK",
+            holders=0,
+            tx_count_24h=0,
+            mint_authority_exists=None,
+            freeze_authority_exists=None,
+            top1_holder_percent=None,
+            top2_holder_percent=None,
+            top5_holders_percent=None,
+            top10_holders_percent=None,
+            age_days=30,  # Known to avoid full opacity HIGH
+            liquidity_usd=50_000,  # Known to avoid full opacity HIGH
+        )
+        factors = risk_service.get_risk_factors(token)
+        # Should have the confidence gate warning
+        assert any("Недостаточно данных" in f for f in factors)
 
 
 class TestRiskServiceFactors:
