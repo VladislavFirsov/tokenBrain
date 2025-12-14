@@ -55,6 +55,47 @@ class TestRiskServiceHighRisk:
         result = risk_service.calculate_risk(high_risk_token)
         assert result == RiskLevel.HIGH
 
+    def test_mint_authority_is_high_risk(
+        self,
+        risk_service: RiskService,
+        low_risk_token: TokenData,
+    ) -> None:
+        """Mint authority present should be HIGH risk."""
+        low_risk_token.mint_authority_exists = True
+        result = risk_service.calculate_risk(low_risk_token)
+        assert result == RiskLevel.HIGH
+
+    def test_freeze_authority_is_high_risk(
+        self,
+        risk_service: RiskService,
+        low_risk_token: TokenData,
+    ) -> None:
+        """Freeze authority present should be HIGH risk."""
+        low_risk_token.freeze_authority_exists = True
+        result = risk_service.calculate_risk(low_risk_token)
+        assert result == RiskLevel.HIGH
+
+    def test_top1_holder_over_50_is_high_risk(
+        self,
+        risk_service: RiskService,
+        low_risk_token: TokenData,
+    ) -> None:
+        """Top 1 holder > 50% should be HIGH risk."""
+        low_risk_token.top1_holder_percent = 55.0
+        result = risk_service.calculate_risk(low_risk_token)
+        assert result == RiskLevel.HIGH
+
+    def test_none_authority_is_not_high_risk(
+        self,
+        risk_service: RiskService,
+        low_risk_token: TokenData,
+    ) -> None:
+        """None (unknown) authority should not trigger HIGH risk."""
+        low_risk_token.mint_authority_exists = None
+        low_risk_token.freeze_authority_exists = None
+        result = risk_service.calculate_risk(low_risk_token)
+        assert result == RiskLevel.LOW  # Token is otherwise low risk
+
 
 class TestRiskServiceLowRisk:
     """Tests for LOW risk detection."""
@@ -218,3 +259,43 @@ class TestRiskServiceFactors:
         factors = risk_service.get_risk_factors(low_risk_token)
         # May have minor factors, but not major ones
         assert len(factors) <= 1
+
+    def test_detects_mint_authority_factor(
+        self,
+        risk_service: RiskService,
+        low_risk_token: TokenData,
+    ) -> None:
+        """Should detect mint authority as risk factor."""
+        low_risk_token.mint_authority_exists = True
+        factors = risk_service.get_risk_factors(low_risk_token)
+        assert any("mint" in f.lower() for f in factors)
+
+    def test_detects_freeze_authority_factor(
+        self,
+        risk_service: RiskService,
+        low_risk_token: TokenData,
+    ) -> None:
+        """Should detect freeze authority as risk factor."""
+        low_risk_token.freeze_authority_exists = True
+        factors = risk_service.get_risk_factors(low_risk_token)
+        assert any("freeze" in f.lower() for f in factors)
+
+    def test_detects_top1_holder_factor(
+        self,
+        risk_service: RiskService,
+        low_risk_token: TokenData,
+    ) -> None:
+        """Should detect top 1 holder concentration as risk factor."""
+        low_risk_token.top1_holder_percent = 55.0
+        factors = risk_service.get_risk_factors(low_risk_token)
+        assert any("кошелёк" in f.lower() or "55" in f for f in factors)
+
+    def test_detects_metadata_mutable_factor(
+        self,
+        risk_service: RiskService,
+        low_risk_token: TokenData,
+    ) -> None:
+        """Should detect mutable metadata as risk factor."""
+        low_risk_token.metadata_mutable = True
+        factors = risk_service.get_risk_factors(low_risk_token)
+        assert any("метаданные" in f.lower() for f in factors)

@@ -27,6 +27,8 @@ class Settings(BaseSettings):
         helius_api_key: Helius API key (optional in mock mode)
         birdeye_api_key: Birdeye API key (optional in mock mode)
         claude_api_key: Claude API key (optional in mock mode)
+        openrouter_api_key: OpenRouter API key for LLM (optional in mock mode)
+        llm_model: LLM model to use via OpenRouter
     """
 
     # Required
@@ -46,6 +48,10 @@ class Settings(BaseSettings):
     helius_api_key: str = ""
     birdeye_api_key: str = ""
     claude_api_key: str = ""
+
+    # OpenRouter LLM settings
+    openrouter_api_key: str = ""
+    llm_model: str = "anthropic/claude-3.5-sonnet"
 
     # Pydantic settings config
     model_config = SettingsConfigDict(

@@ -97,12 +97,12 @@ class TokenData(BaseModel):
     symbol: str | None = None
     """Token symbol (e.g., 'BONK')"""
 
-    # Key metrics
-    age_days: int = Field(ge=0)
-    """Days since contract deployment"""
+    # Key metrics (None = data unavailable)
+    age_days: int | None = None
+    """Days since contract deployment (None if unknown)"""
 
-    liquidity_usd: float = Field(ge=0)
-    """Total liquidity in USD"""
+    liquidity_usd: float | None = None
+    """Total liquidity in USD (None if unknown)"""
 
     holders: int = Field(ge=0)
     """Number of token holders"""
@@ -112,6 +112,23 @@ class TokenData(BaseModel):
 
     tx_count_24h: int = Field(ge=0)
     """Transaction count in last 24 hours"""
+
+    # Authority flags (None = data unavailable)
+    mint_authority_exists: bool | None = None
+    """Whether mint authority is still present (can mint more tokens)"""
+
+    freeze_authority_exists: bool | None = None
+    """Whether freeze authority is still present (can freeze transfers)"""
+
+    metadata_mutable: bool | None = None
+    """Whether token metadata can be changed"""
+
+    # Holder concentration (None = data unavailable)
+    top1_holder_percent: float | None = None
+    """Percentage of supply held by largest wallet"""
+
+    top5_holders_percent: float | None = None
+    """Percentage of supply held by top 5 wallets"""
 
     # Risk indicators
     rugpull_flags: RugpullFlags = Field(default_factory=RugpullFlags)

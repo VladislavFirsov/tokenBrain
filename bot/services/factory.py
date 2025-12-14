@@ -13,10 +13,12 @@ import logging
 from bot.config.settings import Settings
 from bot.core.protocols import LLMProvider, TokenDataProvider
 from bot.services.explain.mock_llm import MockLLMProvider
+from bot.services.explain.openrouter_provider import OpenRouterLLMProvider
 from bot.services.explain.service import ExplainService
 from bot.services.orchestrator import AnalyzerOrchestrator
 from bot.services.risk.service import RiskService
 from bot.services.token_data.aggregator import TokenDataAggregator
+from bot.services.token_data.helius_provider import HeliusTokenDataProvider
 from bot.services.token_data.mock_provider import MockTokenDataProvider
 
 logger = logging.getLogger(__name__)
@@ -63,15 +65,10 @@ class ServiceFactory:
             logger.debug("Creating MockTokenDataProvider")
             return MockTokenDataProvider()
 
-        # TODO: Implement real provider with Helius/Birdeye
-        # return RealTokenDataProvider(
-        #     helius_api_key=self._settings.helius_api_key,
-        #     birdeye_api_key=self._settings.birdeye_api_key,
-        #     timeout=self._settings.api_timeout_seconds,
-        # )
-        raise NotImplementedError(
-            "Real token data provider not implemented. "
-            "Set USE_MOCK_SERVICES=true or implement RealTokenDataProvider."
+        logger.debug("Creating HeliusTokenDataProvider")
+        return HeliusTokenDataProvider(
+            api_key=self._settings.helius_api_key,
+            timeout=1.2,  # SLA: Telegram UX requires fast response
         )
 
     def create_llm_provider(self) -> LLMProvider:
@@ -85,14 +82,11 @@ class ServiceFactory:
             logger.debug("Creating MockLLMProvider")
             return MockLLMProvider()
 
-        # TODO: Implement Claude provider
-        # return ClaudeLLMProvider(
-        #     api_key=self._settings.claude_api_key,
-        #     timeout=self._settings.api_timeout_seconds,
-        # )
-        raise NotImplementedError(
-            "Claude LLM provider not implemented. "
-            "Set USE_MOCK_SERVICES=true or implement ClaudeLLMProvider."
+        logger.debug("Creating OpenRouterLLMProvider")
+        return OpenRouterLLMProvider(
+            api_key=self._settings.openrouter_api_key,
+            model=self._settings.llm_model,
+            timeout=1.5,  # SLA: Telegram UX requires fast response
         )
 
     def create_token_data_aggregator(self) -> TokenDataAggregator:

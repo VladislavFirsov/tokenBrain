@@ -65,9 +65,9 @@ All settings are in `.env` file:
 | `API_TIMEOUT_SECONDS` | No | 10 | API request timeout |
 
 For production with real APIs, also set:
-- `HELIUS_API_KEY` - [Helius](https://helius.dev/)
-- `BIRDEYE_API_KEY` - [Birdeye](https://birdeye.so/)
-- `CLAUDE_API_KEY` - [Anthropic](https://console.anthropic.com/)
+- `HELIUS_API_KEY` - [Helius](https://helius.dev/) for on-chain token data
+- `OPENROUTER_API_KEY` - [OpenRouter](https://openrouter.ai/) for LLM (Claude)
+- `LLM_MODEL` - LLM model to use (default: `anthropic/claude-3.5-sonnet`)
 
 ## Project Structure
 
@@ -103,9 +103,11 @@ The bot follows **Clean Architecture** principles:
 
 | Risk | Conditions |
 |------|------------|
-| HIGH | Liquidity < $20k OR Age < 7 days OR Top10 > 60% |
+| HIGH | Liquidity < $20k OR Age < 7 days OR Top10 > 60% OR Mint authority exists OR Freeze authority exists OR Top1 holder > 50% |
 | MEDIUM | Liquidity 20k-80k OR Age 7-30 days |
-| LOW | Liquidity > $80k AND Age > 30 days AND Top10 <= 60% |
+| LOW | Liquidity > $80k AND Age > 30 days AND Top10 <= 60% AND No mint/freeze authority |
+
+**Note**: Unknown values (liquidity, age) don't trigger HIGH risk automatically.
 
 ## Testing
 
